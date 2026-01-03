@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { appWindow } from '@tauri-apps/api/window';
 import {
   Image,
   FileText,
@@ -10,7 +11,8 @@ import {
   FlipHorizontal,
   Scissors,
   Trash2,
-  Download
+  Download,
+  X
 } from 'lucide-react';
 import ImageProcessor from './components/ImageProcessor';
 import PdfProcessor from './components/PdfProcessor';
@@ -28,6 +30,8 @@ interface DroppedFile {
 function App() {
   const [droppedFile, setDroppedFile] = useState<DroppedFile | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [showTitleBar, setShowTitleBar] = useState(false);
+  const [titleBarClicked, setTitleBarClicked] = useState(false);
 
   useEffect(() => {
     const unlisten = listen('tauri://file-drop', (event: any) => {
@@ -51,6 +55,21 @@ function App() {
       dragCancelUnlisten.then(fn => fn());
     };
   }, []);
+
+  // Resize window when file is dropped or reset
+  useEffect(() => {
+    const resizeWindow = async () => {
+      if (droppedFile) {
+        // Expand window to accommodate processor
+        await appWindow.setSize({ width: 1200, height: 800 });
+      } else {
+        // Shrink to small default size
+        await appWindow.setSize({ width: 300, height: 200 });
+      }
+    };
+
+    resizeWindow();
+  }, [droppedFile]);
 
   const handleFileDrop = useCallback((filePath: string) => {
     setIsDragging(false);
@@ -97,102 +116,59 @@ function App() {
   };
 
   return (
-    <div className="w-full h-full bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      {/* Window titlebar for drag */}
-      <div className="window-titlebar" />
+    <div
+      className="w-full h-full overflow-hidden relative"
+      onMouseEnter={() => setShowTitleBar(true)}
+      onMouseLeave={() => setShowTitleBar(false)}
+    >
+      {/* Full window draggable area */}
+      <div
+        data-tauri-drag-region
+        className="absolute inset-0 cursor-move"
+        onMouseDown={() => setTitleBarClicked(true)}
+        onMouseUp={() => setTitleBarClicked(false)}
+      />
 
-      <div className="w-full h-full flex">
-        {/* Sidebar */}
-        <div className="w-20 h-full flex flex-col items-center py-20 gap-6 border-r border-white/10">
-          <button className="glass-card p-4 rounded-2xl transition-all duration-300">
-            <Image className="w-6 h-6 text-white" />
-          </button>
-          <button className="glass-card p-4 rounded-2xl transition-all duration-300">
-            <FileText className="w-6 h-6 text-white" />
-          </button>
-          <button className="glass-card p-4 rounded-2xl transition-all duration-300">
-            <Video className="w-6 h-6 text-white" />
-          </button>
-          <button className="glass-card p-4 rounded-2xl transition-all duration-300">
-            <Type className="w-6 h-6 text-white" />
-          </button>
-        </div>
+      {/* Close button and indicator - positioned absolutely with pointer-events */}
+      <div className="fixed top-3 left-3 z-50 pointer-events-none">
+        <button
+          onClick={() => appWindow.close()}
+          className={`w-3 h-3 rounded-full bg-[#ff5f56] hover:bg-[#ff5f56]/80 transition-all duration-200 flex items-center justify-center group pointer-events-auto ${
+            showTitleBar ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <X className="w-2 h-2 text-black/60 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </button>
+      </div>
 
-        {/* Main content */}
-        <div className="flex-1 h-full overflow-auto p-8">
+      {/* Visual indicator bar */}
+      <div className="fixed top-0 left-0 right-0 h-10 z-40 pointer-events-none flex items-center justify-center">
+        <div
+          className={`h-1 bg-white/20 rounded-full transition-all duration-150 ${
+            titleBarClicked ? 'w-32' : 'w-24'
+          } ${showTitleBar ? 'opacity-100' : 'opacity-0'}`}
+        />
+      </div>
+
+      <div className="w-full h-full relative z-10 pointer-events-none">
+        <div className="h-full">
           {!droppedFile ? (
-            <div className="h-full flex flex-col items-center justify-center">
-              <div className="text-center mb-12">
-                <h1 className="text-5xl font-bold text-white mb-4 tracking-tight">
-                  Forge
-                </h1>
-                <p className="text-lg text-white/60">
-                  Minimal Media Utility - 100% Local & Private
-                </p>
-              </div>
-
-              {/* Feature cards */}
-              <div className="grid grid-cols-2 gap-6 max-w-4xl mb-12">
-                <div className="glass-card p-6 rounded-3xl transition-all duration-300 cursor-pointer">
-                  <div className="flex items-center gap-3 mb-3">
-                    <Image className="w-5 h-5 text-blue-400" />
-                    <h3 className="text-white font-semibold">Images</h3>
-                  </div>
-                  <p className="text-sm text-white/60">
-                    BG removal, rotate, flip, crop, convert formats
-                  </p>
-                </div>
-
-                <div className="glass-card p-6 rounded-3xl transition-all duration-300 cursor-pointer">
-                  <div className="flex items-center gap-3 mb-3">
-                    <FileText className="w-5 h-5 text-green-400" />
-                    <h3 className="text-white font-semibold">PDFs</h3>
-                  </div>
-                  <p className="text-sm text-white/60">
-                    Merge, rotate, extract text and images
-                  </p>
-                </div>
-
-                <div className="glass-card p-6 rounded-3xl transition-all duration-300 cursor-pointer">
-                  <div className="flex items-center gap-3 mb-3">
-                    <Video className="w-5 h-5 text-purple-400" />
-                    <h3 className="text-white font-semibold">Video/Audio</h3>
-                  </div>
-                  <p className="text-sm text-white/60">
-                    Trim, strip audio, scale, convert to GIF
-                  </p>
-                </div>
-
-                <div className="glass-card p-6 rounded-3xl transition-all duration-300 cursor-pointer">
-                  <div className="flex items-center gap-3 mb-3">
-                    <Type className="w-5 h-5 text-pink-400" />
-                    <h3 className="text-white font-semibold">Text</h3>
-                  </div>
-                  <p className="text-sm text-white/60">
-                    Case conversion, find & replace
-                  </p>
-                </div>
-              </div>
-
+            <div className="h-full flex items-center justify-center">
               {/* Drop zone */}
               <div
-                className={`drop-zone glass-card rounded-3xl p-16 transition-all duration-300 ${
-                  isDragging ? 'drag-over' : ''
+                className={`w-full h-full flex items-center justify-center transition-all duration-200 ${
+                  isDragging ? 'bg-white/5' : ''
                 }`}
               >
-                <div className="text-center">
-                  <Sparkles className="w-16 h-16 text-white/40 mx-auto mb-4" />
-                  <p className="text-xl text-white/80 mb-2">
-                    {isDragging ? 'Drop your file here' : 'Drop any file to begin'}
-                  </p>
-                  <p className="text-sm text-white/50">
-                    Supports images, PDFs, videos, and text files
-                  </p>
-                </div>
+                <p className="text-sm text-white/50 font-medium select-none">
+                  Drop files here
+                </p>
               </div>
             </div>
           ) : (
-            renderProcessor()
+            <div className="pointer-events-auto h-full">
+              {renderProcessor()}
+            </div>
           )}
         </div>
       </div>

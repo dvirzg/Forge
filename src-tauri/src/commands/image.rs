@@ -1,9 +1,7 @@
-use image::{DynamicImage, GenericImageView, ImageFormat, ImageOutputFormat};
-use photon_rs::native::{open_image, save_image};
-use photon_rs::{transform, effects};
+use image::{GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use anyhow::Result;
+// use rmbg::Rmbg;  // Temporarily disabled - incompatible with current ort versions
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImageMetadata {
@@ -21,47 +19,72 @@ pub struct CropParams {
     height: u32,
 }
 
-#[tauri::command]
-pub async fn remove_background(input_path: String, output_path: String) -> Result<String, String> {
-    // Using rmbg crate for local AI background removal
-    // Note: You'll need to download the ONNX model file and provide its path
-    let model_path = "models/u2net.onnx"; // Placeholder - update with actual model path
-
-    tokio::task::spawn_blocking(move || {
-        // Load the image
-        let img = image::open(&input_path)
-            .map_err(|e| format!("Failed to open image: {}", e))?;
-
-        // For now, return a placeholder message
-        // Actual implementation would use rmbg::remove() with the model
-        // let result = rmbg::remove(&img, model_path)?;
-
-        // Save the result
-        // result.save(&output_path).map_err(|e| format!("Failed to save: {}", e))?;
-
-        Ok::<String, String>(format!(
-            "Background removal requires ONNX model at: {}. Image processing ready.",
-            model_path
-        ))
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?
-}
+// Background removal functions temporarily disabled due to rmbg/ort compatibility issues
+// #[tauri::command]
+// pub async fn check_bg_removal_model() -> Result<bool, String> {
+//     tokio::task::spawn_blocking(|| {
+//         // Try to initialize rmbg to check if model is available
+//         match Rmbg::new() {
+//             Ok(_) => Ok(true),
+//             Err(_) => Ok(false),
+//         }
+//     })
+//     .await
+//     .map_err(|e| format!("Task failed: {}", e))?
+// }
+//
+// #[tauri::command]
+// pub async fn download_bg_removal_model() -> Result<String, String> {
+//     tokio::task::spawn_blocking(|| {
+//         // Initialize rmbg which will download the model if needed
+//         Rmbg::new()
+//             .map_err(|e| format!("Failed to download model: {}", e))?;
+//
+//         Ok::<String, String>("Model downloaded and ready!".to_string())
+//     })
+//     .await
+//     .map_err(|e| format!("Task failed: {}", e))?
+// }
+//
+// #[tauri::command]
+// pub async fn remove_background(input_path: String, output_path: String) -> Result<String, String> {
+//     tokio::task::spawn_blocking(move || {
+//         // Load the image
+//         let img = image::open(&input_path)
+//             .map_err(|e| format!("Failed to open image: {}", e))?;
+//
+//         // Initialize rmbg with default model
+//         let rmbg = Rmbg::new()
+//             .map_err(|e| format!("Failed to initialize background removal model: {}. Please download the model first.", e))?;
+//
+//         // Remove background
+//         let result = rmbg.remove(&img)
+//             .map_err(|e| format!("Failed to remove background: {}", e))?;
+//
+//         // Save the result as PNG (to preserve transparency)
+//         result.save_with_format(&output_path, ImageFormat::Png)
+//             .map_err(|e| format!("Failed to save image: {}", e))?;
+//
+//         Ok::<String, String>("Background removed successfully".to_string())
+//     })
+//     .await
+//     .map_err(|e| format!("Task failed: {}", e))?
+// }
 
 #[tauri::command]
 pub async fn rotate_image(input_path: String, output_path: String, degrees: i32) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let mut img = open_image(&input_path)
+        let img = image::open(&input_path)
             .map_err(|e| format!("Failed to open image: {}", e))?;
 
         let rotated = match degrees {
-            90 => transform::rotate90(&img),
-            180 => transform::rotate180(&img),
-            270 => transform::rotate270(&img),
+            90 => img.rotate90(),
+            180 => img.rotate180(),
+            270 => img.rotate270(),
             _ => return Err("Only 90, 180, and 270 degree rotations are supported".to_string()),
         };
 
-        save_image(rotated, &output_path)
+        rotated.save(&output_path)
             .map_err(|e| format!("Failed to save rotated image: {}", e))?;
 
         Ok::<String, String>("Image rotated successfully".to_string())
@@ -73,16 +96,16 @@ pub async fn rotate_image(input_path: String, output_path: String, degrees: i32)
 #[tauri::command]
 pub async fn flip_image(input_path: String, output_path: String, direction: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let mut img = open_image(&input_path)
+        let img = image::open(&input_path)
             .map_err(|e| format!("Failed to open image: {}", e))?;
 
         let flipped = match direction.as_str() {
-            "horizontal" => transform::fliph(&img),
-            "vertical" => transform::flipv(&img),
+            "horizontal" => img.fliph(),
+            "vertical" => img.flipv(),
             _ => return Err("Direction must be 'horizontal' or 'vertical'".to_string()),
         };
 
-        save_image(flipped, &output_path)
+        flipped.save(&output_path)
             .map_err(|e| format!("Failed to save flipped image: {}", e))?;
 
         Ok::<String, String>("Image flipped successfully".to_string())

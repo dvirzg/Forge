@@ -1,6 +1,5 @@
-use lopdf::{Document, Object, ObjectId};
+use lopdf::{Document, Object};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use anyhow::Result;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,7 +115,7 @@ pub async fn extract_images(input_path: String, output_dir: String) -> Result<Ve
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
 
         // Iterate through all objects in the PDF
-        for (object_id, object) in doc.objects.iter() {
+        for (_object_id, object) in doc.objects.iter() {
             if let Object::Stream(stream) = object {
                 if let Ok(dict) = stream.dict.get(b"Subtype") {
                     if let Object::Name(name) = dict {

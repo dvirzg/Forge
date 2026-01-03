@@ -4,13 +4,27 @@
 mod commands;
 
 use tauri::{Manager, Runtime, Window};
-use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
 
-// Apply macOS vibrancy effect
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
+#[cfg(target_os = "macos")]
+use cocoa::appkit::{NSWindow, NSWindowStyleMask};
+#[cfg(target_os = "macos")]
+use cocoa::base::id;
+
+// Apply macOS vibrancy effect for liquid glass look
 pub fn apply_window_vibrancy<R: Runtime>(window: &Window<R>) {
     #[cfg(target_os = "macos")]
-    apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, None)
-        .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
+    apply_vibrancy(
+        window,
+        NSVisualEffectMaterial::Popover,
+        Some(NSVisualEffectState::Active),
+        Some(20.0)
+    )
+    .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
 }
 
 fn main() {
@@ -18,7 +32,7 @@ fn main() {
         .setup(|app| {
             let window = app.get_window("main").unwrap();
 
-            // Apply the vibrancy effect
+            // Apply vibrancy for frosted glass effect
             apply_window_vibrancy(&window);
 
             // Setup file drop handler
@@ -29,7 +43,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::image::remove_background,
+            // commands::image::check_bg_removal_model,  // Temporarily disabled
+            // commands::image::download_bg_removal_model,  // Temporarily disabled
+            // commands::image::remove_background,  // Temporarily disabled
             commands::image::rotate_image,
             commands::image::flip_image,
             commands::image::convert_image,

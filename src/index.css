@@ -14,11 +14,13 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
+  background: transparent;
 }
 
 #root {
   width: 100vw;
   height: 100vh;
+  background: transparent;
 }
 
 /* Custom scrollbar for webkit browsers */
@@ -41,38 +43,46 @@ body {
   background: rgba(255, 255, 255, 0.3);
 }
 
-/* Glass card effect */
+/* AlDente-style cards */
+.aldente-card {
+  background: rgba(45, 45, 45, 0.5);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: none;
+  box-shadow: none;
+}
+
+/* Glass card effect (legacy) */
 .glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  background: rgba(45, 45, 45, 0.5);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 1px 2px 0 rgba(0, 0, 0, 0.3),
+    0 1px 3px 1px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 .glass-card:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(55, 55, 55, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Drag region for window */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 /* Drag and drop zone */
 .drop-zone {
-  border: 2px dashed rgba(255, 255, 255, 0.2);
-  transition: all 0.3s ease;
+  border: 1.5px dashed rgba(255, 255, 255, 0.12);
+  transition: all 0.2s ease;
 }
 
 .drop-zone.drag-over {
-  border-color: rgba(59, 130, 246, 0.5);
-  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(100, 100, 100, 0.4);
+  background: rgba(60, 60, 60, 0.4);
 }
 
-/* macOS traffic light positioning */
-.window-titlebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 52px;
-  -webkit-app-region: drag;
-  z-index: 1000;
-}

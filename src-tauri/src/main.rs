@@ -46,7 +46,9 @@ fn main() {
             // commands::image::check_bg_removal_model,  // Temporarily disabled
             // commands::image::download_bg_removal_model,  // Temporarily disabled
             // commands::image::remove_background,  // Temporarily disabled
+            commands::image::rotate_image_preview,
             commands::image::rotate_image,
+            commands::image::flip_image_preview,
             commands::image::flip_image,
             commands::image::convert_image,
             commands::image::get_image_metadata,

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { appWindow } from '@tauri-apps/api/window';
+import { appWindow, LogicalSize, LogicalPosition, currentMonitor } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/tauri';
 import {
   Image,
   FileText,
@@ -56,15 +57,61 @@ function App() {
     };
   }, []);
 
-  // Resize window when file is dropped or reset
+  // Resize window dynamically when file is dropped or reset
   useEffect(() => {
     const resizeWindow = async () => {
-      if (droppedFile) {
-        // Expand window to accommodate processor
-        await appWindow.setSize({ width: 1200, height: 800 });
-      } else {
-        // Shrink to small default size
-        await appWindow.setSize({ width: 300, height: 200 });
+      try {
+        if (droppedFile) {
+          // Minimum window size to fit all expanded cards
+          const minWidth = 800;
+          const minHeight = 600;
+
+          // Set minimum window size
+          await appWindow.setMinSize(new LogicalSize(minWidth, minHeight));
+
+          // Just resize, don't reposition for now
+          let newWidth = 1000;
+          let newHeight = 600;
+
+          try {
+            if (droppedFile.type === 'image') {
+              // Get image dimensions
+              const metadata = await invoke<{ width: number; height: number }>('get_image_metadata', {
+                inputPath: droppedFile.path,
+              });
+
+              // Calculate window size (add padding for UI controls ~400px width)
+              // Cap height to reasonable maximum and ensure minimum
+              newWidth = Math.max(Math.min(metadata.width + 400, 1600), minWidth);
+              newHeight = Math.max(Math.min(metadata.height + 100, 700), minHeight);
+            } else if (droppedFile.type === 'video' || droppedFile.type === 'pdf') {
+              newWidth = Math.max(1000, minWidth);
+              newHeight = Math.max(600, minHeight);
+            } else {
+              // For text/audio, use fixed size
+              newWidth = Math.max(1000, minWidth);
+              newHeight = Math.max(600, minHeight);
+            }
+          } catch (error) {
+            console.error('Error getting file metadata:', error);
+            newWidth = Math.max(1000, minWidth);
+            newHeight = Math.max(600, minHeight);
+          }
+
+          // Resize window
+          await appWindow.setSize(new LogicalSize(newWidth, newHeight));
+          // Center on screen
+          await appWindow.center();
+        } else {
+          // Reset minimum size to default
+          await appWindow.setMinSize(new LogicalSize(200, 150));
+          // Shrink to small default size
+          await appWindow.setSize(new LogicalSize(300, 200));
+          // Center on screen
+          await appWindow.center();
+        }
+      } catch (error) {
+        console.error('Error resizing window:', error);
       }
     };
 
@@ -121,56 +168,56 @@ function App() {
       onMouseEnter={() => setShowTitleBar(true)}
       onMouseLeave={() => setShowTitleBar(false)}
     >
-      {/* Full window draggable area */}
-      <div
-        data-tauri-drag-region
-        className="absolute inset-0 cursor-move"
-        onMouseDown={() => setTitleBarClicked(true)}
-        onMouseUp={() => setTitleBarClicked(false)}
-      />
-
-      {/* Close button and indicator - positioned absolutely with pointer-events */}
-      <div className="fixed top-3 left-3 z-50 pointer-events-none">
-        <button
-          onClick={() => appWindow.close()}
-          className={`w-3 h-3 rounded-full bg-[#ff5f56] hover:bg-[#ff5f56]/80 transition-all duration-200 flex items-center justify-center group pointer-events-auto ${
-            showTitleBar ? 'opacity-100' : 'opacity-0'
-          }`}
-        >
-          <X className="w-2 h-2 text-black/60 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </button>
-      </div>
-
-      {/* Visual indicator bar */}
-      <div className="fixed top-0 left-0 right-0 h-10 z-40 pointer-events-none flex items-center justify-center">
+      {/* Draggable title bar - always on top */}
+      <div className="fixed top-0 left-0 right-0 h-10 z-50">
         <div
-          className={`h-1 bg-white/20 rounded-full transition-all duration-150 ${
-            titleBarClicked ? 'w-32' : 'w-24'
-          } ${showTitleBar ? 'opacity-100' : 'opacity-0'}`}
+          data-tauri-drag-region
+          className="absolute inset-0 cursor-move"
+          onMouseDown={() => setTitleBarClicked(true)}
+          onMouseUp={() => setTitleBarClicked(false)}
         />
+
+        {/* Close button */}
+        <div className="relative h-full pointer-events-none">
+          <button
+            onClick={() => appWindow.close()}
+            className={`absolute top-3 left-3 w-3 h-3 rounded-full bg-[#ff5f56] hover:bg-[#ff5f56]/80 transition-all duration-200 flex items-center justify-center group pointer-events-auto ${
+              showTitleBar ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            <X className="w-2 h-2 text-black/60 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+
+          {/* Visual indicator bar */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div
+              className={`h-1 bg-white/20 rounded-full transition-all duration-150 ${
+                titleBarClicked ? 'w-32' : 'w-24'
+              } ${showTitleBar ? 'opacity-100' : 'opacity-0'}`}
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="w-full h-full relative z-10 pointer-events-none">
-        <div className="h-full">
-          {!droppedFile ? (
-            <div className="h-full flex items-center justify-center">
-              {/* Drop zone */}
-              <div
-                className={`w-full h-full flex items-center justify-center transition-all duration-200 ${
-                  isDragging ? 'bg-white/5' : ''
-                }`}
-              >
-                <p className="text-sm text-white/50 font-medium select-none">
-                  Drop files here
-                </p>
-              </div>
+      <div className="absolute top-10 left-0 right-0 bottom-0 z-10">
+        {!droppedFile ? (
+          <div className="h-full flex items-center justify-center pointer-events-none">
+            {/* Drop zone */}
+            <div
+              className={`w-full h-full flex items-center justify-center transition-all duration-200 ${
+                isDragging ? 'bg-white/5' : ''
+              }`}
+            >
+              <p className="text-sm text-white/50 font-medium select-none">
+                Drop files here
+              </p>
             </div>
-          ) : (
-            <div className="pointer-events-auto h-full">
-              {renderProcessor()}
-            </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="pointer-events-auto h-full px-6 pb-6">
+            {renderProcessor()}
+          </div>
+        )}
       </div>
     </div>
   );

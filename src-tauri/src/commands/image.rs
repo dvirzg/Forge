@@ -72,6 +72,33 @@ pub struct CropParams {
 // }
 
 #[tauri::command]
+pub async fn rotate_image_preview(input_path: String, degrees: i32) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || {
+        let img = image::open(&input_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let rotated = match degrees {
+            90 => img.rotate90(),
+            180 => img.rotate180(),
+            270 => img.rotate270(),
+            _ => return Err("Only 90, 180, and 270 degree rotations are supported".to_string()),
+        };
+
+        let mut buffer = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut buffer);
+            rotated
+                .write_to(&mut cursor, ImageFormat::Png)
+                .map_err(|e| format!("Failed to encode image: {}", e))?;
+        }
+
+        Ok::<Vec<u8>, String>(buffer)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
 pub async fn rotate_image(input_path: String, output_path: String, degrees: i32) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let img = image::open(&input_path)
@@ -88,6 +115,32 @@ pub async fn rotate_image(input_path: String, output_path: String, degrees: i32)
             .map_err(|e| format!("Failed to save rotated image: {}", e))?;
 
         Ok::<String, String>("Image rotated successfully".to_string())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn flip_image_preview(input_path: String, direction: String) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || {
+        let img = image::open(&input_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let flipped = match direction.as_str() {
+            "horizontal" => img.fliph(),
+            "vertical" => img.flipv(),
+            _ => return Err("Direction must be 'horizontal' or 'vertical'".to_string()),
+        };
+
+        let mut buffer = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut buffer);
+            flipped
+                .write_to(&mut cursor, ImageFormat::Png)
+                .map_err(|e| format!("Failed to encode image: {}", e))?;
+        }
+
+        Ok::<Vec<u8>, String>(buffer)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

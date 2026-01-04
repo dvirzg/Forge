@@ -578,6 +578,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       <ProcessorLayout
         layout="flex"
         sidebarWidth="large"
+        expandedCard={expandedCard}
         preview={
           <div className="rounded-3xl p-6 flex items-center justify-center min-w-0 relative" style={{ overflow: isCropping ? 'visible' : 'hidden' }}>
             <ImagePreview

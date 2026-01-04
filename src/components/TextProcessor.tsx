@@ -131,6 +131,7 @@ function TextProcessor({ file, onReset }: TextProcessorProps) {
 
       <ProcessorLayout
         layout="grid-3"
+        expandedCard={expandedCard}
         preview={
           <div className="glass-card rounded-3xl p-6 flex flex-col">
             <h3 className="text-white font-semibold mb-4">Editor</h3>

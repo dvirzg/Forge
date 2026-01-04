@@ -18,7 +18,7 @@ export function CollapsibleSection({
   children,
 }: CollapsibleSectionProps) {
   return (
-    <div>
+    <div data-collapsible-id={id}>
       <button
         onClick={() => onToggle(id)}
         className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"

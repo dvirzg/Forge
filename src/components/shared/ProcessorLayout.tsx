@@ -1,8 +1,11 @@
+import { ToolsContainer } from './ToolsContainer';
+
 interface ProcessorLayoutProps {
   preview: React.ReactNode;
   sidebar: React.ReactNode;
   layout?: 'flex' | 'grid-2' | 'grid-3';
   sidebarWidth?: 'default' | 'large';
+  expandedCard?: string | null;
 }
 
 /**
@@ -14,6 +17,7 @@ export function ProcessorLayout({
   sidebar,
   layout = 'flex',
   sidebarWidth = 'default',
+  expandedCard = null,
 }: ProcessorLayoutProps) {
   const sidebarClass = sidebarWidth === 'large' ? 'w-80' : 'w-72';
 
@@ -21,7 +25,11 @@ export function ProcessorLayout({
     return (
       <div className="flex-1 grid grid-cols-2 gap-6 overflow-hidden">
         <div className="flex items-center justify-center">{preview}</div>
-        <div className="flex flex-col gap-4 overflow-y-auto">{sidebar}</div>
+        <div className="py-6 px-4 overflow-x-visible">
+          <ToolsContainer expandedCard={expandedCard}>
+            {sidebar}
+          </ToolsContainer>
+        </div>
       </div>
     );
   }
@@ -30,7 +38,11 @@ export function ProcessorLayout({
     return (
       <div className="flex-1 grid grid-cols-3 gap-6 overflow-hidden">
         <div className="col-span-2">{preview}</div>
-        <div className="flex flex-col gap-4 overflow-y-auto">{sidebar}</div>
+        <div className="py-6 px-4 overflow-x-visible">
+          <ToolsContainer expandedCard={expandedCard}>
+            {sidebar}
+          </ToolsContainer>
+        </div>
       </div>
     );
   }
@@ -39,8 +51,10 @@ export function ProcessorLayout({
   return (
     <div className="flex-1 flex gap-6 min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">{preview}</div>
-      <div className={`${sidebarClass} flex-shrink-0 flex flex-col gap-4 overflow-y-auto overflow-x-visible py-6 px-1`}>
-        {sidebar}
+      <div className={`${sidebarClass} flex-shrink-0 py-6 px-4 overflow-x-visible`}>
+        <ToolsContainer expandedCard={expandedCard}>
+          {sidebar}
+        </ToolsContainer>
       </div>
     </div>
   );

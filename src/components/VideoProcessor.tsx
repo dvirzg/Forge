@@ -182,6 +182,7 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
 
       <ProcessorLayout
         layout="grid-2"
+        expandedCard={expandedCard}
         preview={
           <div className="glass-card rounded-3xl p-6 flex items-center justify-center w-full h-full">
             <div className="text-center">

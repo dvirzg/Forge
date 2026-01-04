@@ -863,6 +863,7 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
 
       <ProcessorLayout
         layout="flex"
+        expandedCard={expandedCard}
         preview={
           <div className="flex-1 min-w-0 flex flex-col">
             {viewMode === 'text' && extractedText ? (

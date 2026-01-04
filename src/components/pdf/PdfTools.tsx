@@ -55,7 +55,7 @@ export function PdfTools({
   onZoomReset,
 }: PdfToolsProps) {
   return (
-    <div className="w-72 flex-shrink-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden py-6">
+    <>
       {/* Rotate Pages */}
       <CollapsibleSection
         id="rotate"
@@ -175,6 +175,6 @@ export function PdfTools({
         onPageChange={onPageChange}
         onZoomReset={onZoomReset}
       />
-    </div>
+    </>
   );
 }

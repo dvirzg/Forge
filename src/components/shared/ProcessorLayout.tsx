@@ -25,7 +25,7 @@ export function ProcessorLayout({
     return (
       <div className="flex-1 grid grid-cols-2 gap-4 overflow-hidden">
         <div className="flex items-center justify-center">{preview}</div>
-        <div className="pt-6 pb-3 px-4 overflow-x-visible">
+        <div className="pt-6 pb-1 px-1 overflow-x-visible">
           <ToolsContainer expandedCard={expandedCard}>
             {sidebar}
           </ToolsContainer>
@@ -38,7 +38,7 @@ export function ProcessorLayout({
     return (
       <div className="flex-1 grid grid-cols-3 gap-4 overflow-hidden">
         <div className="col-span-2">{preview}</div>
-        <div className="pt-6 pb-3 px-4 overflow-x-visible">
+        <div className="pt-6 pb-1 px-1 overflow-x-visible">
           <ToolsContainer expandedCard={expandedCard}>
             {sidebar}
           </ToolsContainer>
@@ -51,7 +51,7 @@ export function ProcessorLayout({
   return (
     <div className="flex-1 flex gap-4 min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">{preview}</div>
-      <div className={`${sidebarClass} flex-shrink-0 pt-6 pb-3 px-4 overflow-x-visible`}>
+      <div className={`${sidebarClass} flex-shrink-0 pt-6 pb-1 px-1 overflow-x-visible`}>
         <ToolsContainer expandedCard={expandedCard}>
           {sidebar}
         </ToolsContainer>

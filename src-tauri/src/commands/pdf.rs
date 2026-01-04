@@ -1,7 +1,6 @@
 use lopdf::{Document, Object};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
-use chrono;
 use std::collections::HashMap;
 use crate::utils::file_metadata::get_file_metadata;
 use crate::utils::compression::CompressionLevel;
@@ -244,6 +243,12 @@ pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String>
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PdfPageDimensions {
+    width: f64,
+    height: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PdfCompressionResult {
     output_path: String,
     file_size: u64,
@@ -297,6 +302,66 @@ pub async fn estimate_pdf_compressed_size(
         let estimated_size = (file_metadata.size as f64 * compression.size_reduction_factor()) as u64;
 
         Ok::<u64, String>(estimated_size)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_pdf_page_dimensions(input_path: String) -> Result<PdfPageDimensions, String> {
+    tokio::task::spawn_blocking(move || {
+        let doc = Document::load(&input_path)
+            .map_err(|e| format!("Failed to load PDF: {}", e))?;
+
+        let pages = doc.get_pages();
+        if pages.is_empty() {
+            return Err("PDF has no pages".to_string());
+        }
+
+        // Get first page
+        let (_, first_page_id) = pages.iter().next().unwrap();
+        let page_obj = doc.get_object(*first_page_id)
+            .map_err(|e| format!("Failed to get page object: {}", e))?;
+
+        // Get MediaBox from page
+        let mut width = 612.0; // Default US Letter width in points
+        let mut height = 792.0; // Default US Letter height in points
+
+        if let Object::Dictionary(dict) = page_obj {
+            if let Ok(media_box) = dict.get(b"MediaBox") {
+                if let Object::Array(ref arr) = media_box {
+                    if arr.len() >= 4 {
+                        let x1 = match &arr[0] {
+                            Object::Real(f) => *f as f64,
+                            Object::Integer(i) => *i as f64,
+                            _ => 0.0,
+                        };
+                        let y1 = match &arr[1] {
+                            Object::Real(f) => *f as f64,
+                            Object::Integer(i) => *i as f64,
+                            _ => 0.0,
+                        };
+                        let x2 = match &arr[2] {
+                            Object::Real(f) => *f as f64,
+                            Object::Integer(i) => *i as f64,
+                            _ => 0.0,
+                        };
+                        let y2 = match &arr[3] {
+                            Object::Real(f) => *f as f64,
+                            Object::Integer(i) => *i as f64,
+                            _ => 0.0,
+                        };
+                        width = (x2 - x1).abs();
+                        height = (y2 - y1).abs();
+                    }
+                }
+            }
+        }
+
+        Ok::<PdfPageDimensions, String>(PdfPageDimensions {
+            width,
+            height,
+        })
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { appWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
@@ -6,6 +6,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { ChevronLeft, ChevronRight, X, ZoomIn } from 'lucide-react';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+import { usePreviewSize } from '../hooks/useWindowResize';
 
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
@@ -83,49 +84,17 @@ function PdfViewerWindow() {
   };
 
   // Calculate page size to fit viewport (both width and height)
-  const calculatePageSize = useCallback(async () => {
-    if (typeof window === 'undefined' || !pdfData || !numPages || !pageContainerRef.current) return;
-
-    try {
-      const pdf = await pdfjs.getDocument(pdfData).promise;
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: 1.0 });
-
-      // Get actual container dimensions
-      const containerRect = pageContainerRef.current.getBoundingClientRect();
-      const padding = 20; // Minimal padding around the page
-      const availableWidth = containerRect.width - padding * 2;
-      const availableHeight = containerRect.height - padding * 2;
-
-      // Calculate scale to fit both dimensions, allow up to 150% for readability
-      const scaleX = availableWidth / viewport.width;
-      const scaleY = availableHeight / viewport.height;
-      const scale = Math.min(scaleX, scaleY, 1.5);
-
-      setPageWidth(viewport.width * scale);
-    } catch (error) {
-      console.error('Failed to calculate page size:', error);
-    }
-  }, [pdfData, pageNumber, numPages]);
-
-  useEffect(() => {
-    calculatePageSize();
-  }, [calculatePageSize]);
-
-  // Recalculate page size when container size changes
-  useEffect(() => {
-    if (!pageContainerRef.current) return;
-
-    const resizeObserver = new ResizeObserver(() => {
-      calculatePageSize();
-    });
-
-    resizeObserver.observe(pageContainerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [calculatePageSize]);
+  usePreviewSize({
+    pdfData,
+    pageNumber,
+    numPages,
+    pageContainerRef,
+    pdfAspectRatio: null,
+    setPdfAspectRatio: () => {},
+    setPageWidth,
+    padding: 20,
+    maxScale: 1.5,
+  });
 
   // Reset zoom when page changes
   useEffect(() => {

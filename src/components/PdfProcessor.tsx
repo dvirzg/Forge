@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { open } from '@tauri-apps/api/dialog';
+import { open, save } from '@tauri-apps/api/dialog';
 import { readBinaryFile, writeBinaryFile } from '@tauri-apps/api/fs';
 import { Header } from './shared/Header';
 import { pdfjs } from 'react-pdf';
@@ -24,6 +24,7 @@ import { SignatureModal } from './pdf/SignatureModal';
 import { ProcessorLayout } from './shared/ProcessorLayout';
 import { BaseProcessorProps } from '../types/processor';
 import { PROCESSOR_CONSTANTS } from '../constants/processor';
+import { usePreviewSize } from '../hooks/useWindowResize';
 
 interface PdfProcessorProps extends BaseProcessorProps {
   multiplePdfs?: Array<{ path: string; name: string }>;
@@ -89,6 +90,7 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
   const [pdfError, setPdfError] = useState(false);
   const [viewMode, setViewMode] = useState<'preview' | 'text'>('preview');
   const [pageWidth, setPageWidth] = useState(800);
+  const [pdfAspectRatio, setPdfAspectRatio] = useState<number | null>(null);
   const [isZoomMode, setIsZoomMode] = useState(false);
   const [zoomHistory, setZoomHistory] = useState<ZoomState[]>([]);
   const [currentZoom, setCurrentZoom] = useState<ZoomState>({ scale: 1, offsetX: 0, offsetY: 0 });
@@ -401,48 +403,21 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
     }
   }, [pdfData, pageNumber, numPages, file.name]);
 
+  // Reset aspect ratio when PDF or page changes
+  useEffect(() => {
+    setPdfAspectRatio(null);
+  }, [pdfData, pageNumber]);
+
   // Calculate page size to fit viewport
-  const calculatePageSize = useCallback(async () => {
-    if (typeof window === 'undefined' || !pdfData || !numPages || !pageContainerRef.current) return;
-
-    try {
-      const pdf = await pdfjs.getDocument(pdfData).promise;
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: 1.0 });
-
-      const containerRect = pageContainerRef.current.getBoundingClientRect();
-      const padding = PROCESSOR_CONSTANTS.PREVIEW_PADDING;
-      const availableWidth = containerRect.width - padding * 2;
-      const availableHeight = containerRect.height - padding * 2;
-
-      const scaleX = availableWidth / viewport.width;
-      const scaleY = availableHeight / viewport.height;
-      const scale = Math.min(scaleX, scaleY, PROCESSOR_CONSTANTS.MAX_PDF_SCALE);
-
-      setPageWidth(viewport.width * scale);
-    } catch (error) {
-      console.error('Failed to calculate page size:', error);
-    }
-  }, [pdfData, pageNumber, numPages]);
-
-  useEffect(() => {
-    calculatePageSize();
-  }, [calculatePageSize]);
-
-  // Recalculate page size when container size changes
-  useEffect(() => {
-    if (!pageContainerRef.current) return;
-
-    const resizeObserver = new ResizeObserver(() => {
-      calculatePageSize();
-    });
-
-    resizeObserver.observe(pageContainerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [calculatePageSize]);
+  usePreviewSize({
+    pdfData,
+    pageNumber,
+    numPages,
+    pageContainerRef,
+    pdfAspectRatio,
+    setPdfAspectRatio,
+    setPageWidth,
+  });
 
   // Reset zoom when page changes
   useEffect(() => {

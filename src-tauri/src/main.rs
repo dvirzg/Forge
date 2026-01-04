@@ -30,12 +30,6 @@ fn main() {
         .setup(|app| {
             let window = app.get_window("main").unwrap();
 
-            // Set window size to ensure proper dimensions for PDF viewing
-            let _ = window.set_size(tauri::LogicalSize {
-                width: 1200.0,
-                height: 1000.0,
-            });
-
             // Apply vibrancy for frosted glass effect
             apply_window_vibrancy(&window);
 
@@ -68,6 +62,7 @@ fn main() {
             commands::pdf::extract_text,
             commands::pdf::extract_images,
             commands::pdf::get_pdf_metadata,
+            commands::pdf::get_pdf_page_dimensions,
             commands::pdf::compress_pdf,
             commands::pdf::estimate_pdf_compressed_size,
             commands::video::trim_video,

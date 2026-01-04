@@ -23,7 +23,8 @@ export const PROCESSOR_REGISTRY: Record<string, ProcessorComponent> = {
  * @returns The processor component or null if not found
  */
 export function getProcessorComponent(
-  fileType: string
+  fileType: string | null
 ): ProcessorComponent | null {
+  if (!fileType) return null;
   return PROCESSOR_REGISTRY[fileType] || null;
 }

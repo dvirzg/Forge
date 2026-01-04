@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { CompressionSlider } from './shared/CompressionSlider';
 import { FileSizeComparison } from './shared/FileSizeComparison';
+import { formatFileSize } from '../utils/fileUtils';
 
 interface ImageProcessorProps {
   file: {
@@ -762,12 +763,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
            Object.keys(metadata.xmp).length > 0;
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  };
 
   const handleOpenMetadataDetail = async () => {
     const entries = getAllMetadataEntries();

@@ -5,6 +5,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use exif::Reader;
+use crate::utils::file_metadata::get_file_metadata;
+use crate::utils::compression::CompressionLevel;
+use crate::utils::path_utils::generate_output_path;
 // use rmbg::Rmbg;  // Temporarily disabled - incompatible with current ort versions
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -225,25 +228,7 @@ pub async fn get_image_metadata(input_path: String) -> Result<ImageMetadata, Str
         let has_alpha = img.color().has_alpha();
         
         // Get file metadata
-        let file_metadata = std::fs::metadata(&input_path)
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-        let file_size = file_metadata.len();
-        
-        let file_created = file_metadata.created()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
-        
-        let file_modified = file_metadata.modified()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
+        let file_metadata = get_file_metadata(&input_path)?;
 
         // Extract bit depth from color type
         let bit_depth = match img.color() {
@@ -274,14 +259,14 @@ pub async fn get_image_metadata(input_path: String) -> Result<ImageMetadata, Str
             height,
             format,
             color_type,
-            file_size,
+            file_size: file_metadata.size,
             bit_depth,
             has_alpha,
             exif: exif_data,
             iptc: iptc_data,
             xmp: xmp_data,
-            file_created,
-            file_modified,
+            file_created: file_metadata.created,
+            file_modified: file_metadata.modified,
         })
     })
     .await
@@ -376,39 +361,6 @@ pub struct CompressionResult {
     file_size: u64,
 }
 
-fn get_jpeg_quality(level: u8) -> u8 {
-    match level {
-        0 => 100, // Lossless
-        1 => 95,  // Near Lossless
-        2 => 85,  // High Quality
-        3 => 70,  // Medium Quality
-        4 => 50,  // Low Quality
-        _ => 85,
-    }
-}
-
-fn get_webp_quality(level: u8) -> f32 {
-    match level {
-        0 => 100.0, // Lossless
-        1 => 95.0,  // Near Lossless
-        2 => 85.0,  // High Quality
-        3 => 70.0,  // Medium Quality
-        4 => 50.0,  // Low Quality
-        _ => 85.0,
-    }
-}
-
-fn get_png_compression(level: u8) -> image::codecs::png::CompressionType {
-    use image::codecs::png::CompressionType;
-    match level {
-        0 => CompressionType::Default,     // Lossless, no compression
-        1 => CompressionType::Fast,        // Near Lossless
-        2 => CompressionType::Default,     // High Quality
-        3 => CompressionType::Best,        // Medium Quality
-        4 => CompressionType::Best,        // Low Quality
-        _ => CompressionType::Default,
-    }
-}
 
 #[tauri::command]
 pub async fn compress_image(
@@ -422,15 +374,6 @@ pub async fn compress_image(
         let img = image::open(&input_path)
             .map_err(|e| format!("Failed to open image: {}", e))?;
 
-        // Create output path with proper extension
-        let input_path_obj = std::path::Path::new(&input_path);
-        let stem = input_path_obj.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("compressed");
-        let parent = input_path_obj.parent()
-            .map(|p| p.to_str().unwrap_or(""))
-            .unwrap_or("");
-
         let extension = match output_format.to_lowercase().as_str() {
             "jpg" | "jpeg" => "jpg",
             "png" => "png",
@@ -438,12 +381,13 @@ pub async fn compress_image(
             _ => return Err(format!("Unsupported format: {}", output_format)),
         };
 
-        let output_path = format!("{}/{}_compressed.{}", parent, stem, extension);
+        let output_path = generate_output_path(&input_path, "compressed", extension);
+        let compression = CompressionLevel::from_u8(quality_level);
 
         // Encode with quality settings
         match output_format.to_lowercase().as_str() {
             "jpg" | "jpeg" => {
-                let quality = get_jpeg_quality(quality_level);
+                let quality = compression.jpeg_quality();
                 let file = std::fs::File::create(&output_path)
                     .map_err(|e| format!("Failed to create output file: {}", e))?;
                 let mut encoder = JpegEncoder::new_with_quality(file, quality);
@@ -457,16 +401,9 @@ pub async fn compress_image(
                 .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
             }
             "webp" => {
-                // WebP encoding in image 0.25 uses save_with_format with quality
-                // For lossless, use lossless encoding, otherwise use quality-based encoding
-                if quality_level == 0 {
-                    img.save_with_format(&output_path, ImageFormat::WebP)
-                        .map_err(|e| format!("Failed to encode WebP: {}", e))?;
-                } else {
-                    // For quality-based encoding, we'll use the default save which applies compression
-                    img.save_with_format(&output_path, ImageFormat::WebP)
-                        .map_err(|e| format!("Failed to encode WebP: {}", e))?;
-                }
+                // WebP encoding - save_with_format handles quality automatically
+                img.save_with_format(&output_path, ImageFormat::WebP)
+                    .map_err(|e| format!("Failed to encode WebP: {}", e))?;
             }
             "png" => {
                 // PNG encoding in image 0.25 - use save_with_format
@@ -478,9 +415,7 @@ pub async fn compress_image(
         }
 
         // Get output file size
-        let file_size = std::fs::metadata(&output_path)
-            .map_err(|e| format!("Failed to get output file size: {}", e))?
-            .len();
+        let file_size = get_file_metadata(&output_path)?.size;
 
         Ok::<CompressionResult, String>(CompressionResult {
             output_path,
@@ -506,9 +441,11 @@ pub async fn estimate_compressed_size(
         // Encode to memory buffer
         let mut buffer = Vec::new();
 
+        let compression = CompressionLevel::from_u8(quality_level);
+        
         match output_format.to_lowercase().as_str() {
             "jpg" | "jpeg" => {
-                let quality = get_jpeg_quality(quality_level);
+                let quality = compression.jpeg_quality();
                 let mut cursor = std::io::Cursor::new(&mut buffer);
                 let mut encoder = JpegEncoder::new_with_quality(&mut cursor, quality);
                 let rgb_img = img.to_rgb8();

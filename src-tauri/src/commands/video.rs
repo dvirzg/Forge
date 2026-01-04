@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use anyhow::Result;
 use std::collections::HashMap;
-use chrono;
+use crate::utils::compression::CompressionLevel;
+use crate::utils::path_utils::generate_output_path;
+use crate::utils::file_metadata::get_file_metadata;
+use crate::utils::command_executor::{FfmpegExecutor, FfprobeExecutor, CommandExecutor, validate_output};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TrimParams {
@@ -25,24 +28,16 @@ pub async fn trim_video(
     end_time: String,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        // Calculate duration from start and end time
-        let output = Command::new("ffmpeg")
-            .args(&[
-                "-i", &input_path,
-                "-ss", &start_time,
-                "-to", &end_time,
-                "-c", "copy",
-                "-y",
-                &output_path,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to execute ffmpeg: {}. Make sure ffmpeg is installed.", e))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("FFmpeg error: {}", error));
-        }
-
+        let executor = FfmpegExecutor;
+        let output = executor.execute(&[
+            "-i", &input_path,
+            "-ss", &start_time,
+            "-to", &end_time,
+            "-c", "copy",
+            "-y",
+            &output_path,
+        ])?;
+        validate_output(&output)?;
         Ok::<String, String>("Video trimmed successfully".to_string())
     })
     .await
@@ -53,22 +48,15 @@ pub async fn trim_video(
 #[tauri::command]
 pub async fn strip_audio(input_path: String, output_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("ffmpeg")
-            .args(&[
-                "-i", &input_path,
-                "-c", "copy",
-                "-an", // Remove audio
-                "-y",
-                &output_path,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to execute ffmpeg: {}. Make sure ffmpeg is installed.", e))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("FFmpeg error: {}", error));
-        }
-
+        let executor = FfmpegExecutor;
+        let output = executor.execute(&[
+            "-i", &input_path,
+            "-c", "copy",
+            "-an",
+            "-y",
+            &output_path,
+        ])?;
+        validate_output(&output)?;
         Ok::<String, String>("Audio stripped successfully".to_string())
     })
     .await
@@ -85,23 +73,15 @@ pub async fn scale_video(
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let scale_filter = format!("scale={}:{}", width, height);
-
-        let output = Command::new("ffmpeg")
-            .args(&[
-                "-i", &input_path,
-                "-vf", &scale_filter,
-                "-c:a", "copy",
-                "-y",
-                &output_path,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to execute ffmpeg: {}. Make sure ffmpeg is installed.", e))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("FFmpeg error: {}", error));
-        }
-
+        let executor = FfmpegExecutor;
+        let output = executor.execute(&[
+            "-i", &input_path,
+            "-vf", &scale_filter,
+            "-c:a", "copy",
+            "-y",
+            &output_path,
+        ])?;
+        validate_output(&output)?;
         Ok::<String, String>(format!("Video scaled to {}x{} successfully", width, height))
     })
     .await
@@ -125,38 +105,27 @@ pub async fn video_to_gif(
         let gif_filter = format!("fps={},scale={}:-1:flags=lanczos[x];[x][1:v]paletteuse", fps_value, width_value);
 
         // First, generate palette
-        let palette_path = "/tmp/palette.png";
-        let palette_output = Command::new("ffmpeg")
-            .args(&[
-                "-i", &input_path,
-                "-vf", &palette_filter,
-                "-y",
-                palette_path,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to generate palette: {}", e))?;
-
-        if !palette_output.status.success() {
-            let error = String::from_utf8_lossy(&palette_output.stderr);
-            return Err(format!("Palette generation error: {}", error));
-        }
+        use crate::utils::path_utils::get_temp_path;
+        let palette_path = get_temp_path("palette", "png");
+        let executor = FfmpegExecutor;
+        
+        let palette_output = executor.execute_strings(vec![
+            "-i".to_string(), input_path.clone(),
+            "-vf".to_string(), palette_filter,
+            "-y".to_string(),
+            palette_path.clone(),
+        ])?;
+        validate_output(&palette_output)?;
 
         // Then create GIF using the palette
-        let gif_output = Command::new("ffmpeg")
-            .args(&[
-                "-i", &input_path,
-                "-i", palette_path,
-                "-lavfi", &gif_filter,
-                "-y",
-                &output_path,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to create GIF: {}", e))?;
-
-        if !gif_output.status.success() {
-            let error = String::from_utf8_lossy(&gif_output.stderr);
-            return Err(format!("GIF creation error: {}", error));
-        }
+        let gif_output = executor.execute_strings(vec![
+            "-i".to_string(), input_path,
+            "-i".to_string(), palette_path.clone(),
+            "-lavfi".to_string(), gif_filter,
+            "-y".to_string(),
+            output_path.clone(),
+        ])?;
+        validate_output(&gif_output)?;
 
         // Clean up palette file
         let _ = std::fs::remove_file(palette_path);
@@ -179,36 +148,17 @@ pub struct VideoMetadata {
 pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, String> {
     tokio::task::spawn_blocking(move || {
         // Get file metadata
-        let file_metadata = std::fs::metadata(&input_path)
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-        let file_size = file_metadata.len();
-
-        let file_created = file_metadata.created()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
-
-        let file_modified = file_metadata.modified()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
+        let file_metadata = get_file_metadata(&input_path)?;
 
         // Use ffprobe to get video metadata
-        let output = Command::new("ffprobe")
-            .args(&[
-                "-v", "quiet",
-                "-print_format", "json",
-                "-show_format",
-                "-show_streams",
-                &input_path,
-            ])
-            .output();
+        let executor = FfprobeExecutor;
+        let output = executor.execute(&[
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+            &input_path,
+        ]);
 
         let mut all_metadata = HashMap::new();
 
@@ -265,9 +215,9 @@ pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, Str
         }
 
         Ok::<VideoMetadata, String>(VideoMetadata {
-            file_size,
-            file_created,
-            file_modified,
+            file_size: file_metadata.size,
+            file_created: file_metadata.created,
+            file_modified: file_metadata.modified,
             all_metadata,
         })
     })
@@ -281,16 +231,6 @@ pub struct VideoCompressionResult {
     file_size: u64,
 }
 
-fn get_crf_value(level: u8) -> u8 {
-    match level {
-        0 => 0,   // Lossless
-        1 => 17,  // Near Lossless (visually identical)
-        2 => 23,  // High Quality (FFmpeg default)
-        3 => 28,  // Medium Quality
-        4 => 35,  // Low Quality
-        _ => 23,
-    }
-}
 
 #[tauri::command]
 pub async fn compress_video(
@@ -298,62 +238,49 @@ pub async fn compress_video(
     quality_level: u8,
 ) -> Result<VideoCompressionResult, String> {
     tokio::task::spawn_blocking(move || {
-        // Create output path
-        let input_path_obj = std::path::Path::new(&input_path);
-        let stem = input_path_obj.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("compressed");
-        let extension = input_path_obj.extension()
+        // Get file extension
+        let extension = std::path::Path::new(&input_path)
+            .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("mp4");
-        let parent = input_path_obj.parent()
-            .map(|p| p.to_str().unwrap_or(""))
-            .unwrap_or("");
 
-        let output_path = format!("{}/{}_compressed.{}", parent, stem, extension);
+        let output_path = generate_output_path(&input_path, "compressed", extension);
+        let compression = CompressionLevel::from_u8(quality_level);
+        let video_settings = compression.video_crf();
 
-        let crf = get_crf_value(quality_level);
-        let crf_str = crf.to_string();
+        // Build FFmpeg arguments
+        let args: Vec<String> = if quality_level == 0 {
+            // Lossless settings
+            vec![
+                "-i".to_string(), input_path.clone(),
+                "-c:v".to_string(), "libx264".to_string(),
+                "-preset".to_string(), "veryslow".to_string(),
+                "-qp".to_string(), "0".to_string(),
+                "-c:a".to_string(), "copy".to_string(),
+                "-y".to_string(),
+                output_path.clone(),
+            ]
+        } else {
+            // Lossy settings
+            vec![
+                "-i".to_string(), input_path.clone(),
+                "-c:v".to_string(), "libx264".to_string(),
+                "-crf".to_string(), video_settings.crf.to_string(),
+                "-preset".to_string(), video_settings.preset.to_string(),
+                "-c:a".to_string(), "aac".to_string(),
+                "-b:a".to_string(), "128k".to_string(),
+                "-y".to_string(),
+                output_path.clone(),
+            ]
+        };
 
-        // Use FFmpeg with CRF for quality control
-        let mut args = vec![
-            "-i", &input_path,
-            "-c:v", "libx264",
-            "-crf", &crf_str,
-            "-preset", "medium",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-y",
-            &output_path,
-        ];
-
-        // For lossless, use different settings
-        if quality_level == 0 {
-            args = vec![
-                "-i", &input_path,
-                "-c:v", "libx264",
-                "-preset", "veryslow",
-                "-qp", "0",
-                "-c:a", "copy",
-                "-y",
-                &output_path,
-            ];
-        }
-
-        let output = Command::new("ffmpeg")
-            .args(&args)
-            .output()
-            .map_err(|e| format!("Failed to execute ffmpeg. Is it installed? Error: {}", e))?;
-
-        if !output.status.success() {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("FFmpeg compression failed: {}", error_msg));
-        }
+        // Execute FFmpeg
+        let executor = FfmpegExecutor;
+        let output = executor.execute_strings(args)?;
+        validate_output(&output)?;
 
         // Get output file size
-        let file_size = std::fs::metadata(&output_path)
-            .map_err(|e| format!("Failed to get output file size: {}", e))?
-            .len();
+        let file_size = get_file_metadata(&output_path)?.size;
 
         Ok::<VideoCompressionResult, String>(VideoCompressionResult {
             output_path,
@@ -370,23 +297,17 @@ pub async fn estimate_video_compressed_size(
     quality_level: u8,
 ) -> Result<u64, String> {
     tokio::task::spawn_blocking(move || {
-        // Get original file size
-        let original_size = std::fs::metadata(&input_path)
-            .map_err(|e| format!("Failed to get file size: {}", e))?
-            .len();
-
-        // Use heuristic reduction factors based on CRF quality level
-        let reduction_factor = match quality_level {
-            0 => 1.10,  // Lossless - might be slightly larger
-            1 => 0.80,  // Near Lossless - small compression (20%)
-            2 => 0.50,  // High Quality - moderate compression (50%)
-            3 => 0.30,  // Medium Quality - significant compression (70%)
-            4 => 0.15,  // Low Quality - aggressive compression (85%)
-            _ => 0.50,
+        let metadata = get_file_metadata(&input_path)?;
+        let compression = CompressionLevel::from_u8(quality_level);
+        
+        // Lossless might be slightly larger, others use reduction factor
+        let reduction_factor = if quality_level == 0 {
+            1.10
+        } else {
+            compression.size_reduction_factor()
         };
 
-        let estimated_size = (original_size as f64 * reduction_factor) as u64;
-
+        let estimated_size = (metadata.size as f64 * reduction_factor) as u64;
         Ok::<u64, String>(estimated_size)
     })
     .await

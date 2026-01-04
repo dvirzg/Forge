@@ -7,6 +7,7 @@ import ImageProcessor from './components/ImageProcessor';
 import PdfProcessor from './components/PdfProcessor';
 import VideoProcessor from './components/VideoProcessor';
 import TextProcessor from './components/TextProcessor';
+import { detectFileType, FILE_EXTENSIONS } from './utils/fileType';
 
 type FileType = 'image' | 'pdf' | 'video' | 'text' | null;
 
@@ -146,20 +147,7 @@ function App() {
     // Single file (PDF or other type)
     const filePath = paths[0];
     const fileName = filePath.split('/').pop() || '';
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-
-    let fileType: FileType = null;
-
-    // Determine file type
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'tiff'].includes(extension)) {
-      fileType = 'image';
-    } else if (extension === 'pdf') {
-      fileType = 'pdf';
-    } else if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'mp3', 'wav', 'aac', 'flac'].includes(extension)) {
-      fileType = 'video';
-    } else if (['txt', 'md', 'json', 'xml', 'csv'].includes(extension)) {
-      fileType = 'text';
-    }
+    const fileType = detectFileType(fileName);
 
     if (fileType) {
       setDroppedFile({ path: filePath, name: fileName, type: fileType });

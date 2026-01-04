@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use chrono;
 use std::collections::HashMap;
+use crate::utils::file_metadata::get_file_metadata;
+use crate::utils::compression::CompressionLevel;
+use crate::utils::path_utils::generate_output_path;
+use crate::utils::command_executor::{GhostscriptExecutor, CommandExecutor, validate_output};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PdfInfo {
@@ -202,25 +206,7 @@ pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String>
         let pdf_version = Some(doc.version.clone());
 
         // Get file metadata
-        let file_metadata = std::fs::metadata(&input_path)
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-        let file_size = file_metadata.len();
-
-        let file_created = file_metadata.created()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
-
-        let file_modified = file_metadata.modified()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
+        let file_metadata = get_file_metadata(&input_path)?;
 
         // Extract PDF document info - dynamically get all fields
         let mut pdf_metadata = HashMap::new();
@@ -245,11 +231,11 @@ pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String>
 
         Ok::<PdfMetadata, String>(PdfMetadata {
             pages: page_count,
-            file_size,
+            file_size: file_metadata.size,
             pdf_version,
             encrypted,
-            file_created,
-            file_modified,
+            file_created: file_metadata.created,
+            file_modified: file_metadata.modified,
             all_metadata: pdf_metadata,
         })
     })
@@ -263,16 +249,6 @@ pub struct PdfCompressionResult {
     file_size: u64,
 }
 
-fn get_ghostscript_settings(level: u8) -> &'static str {
-    match level {
-        0 => "/default",      // Lossless - default quality
-        1 => "/prepress",     // Near Lossless - high quality for prepress
-        2 => "/printer",      // High Quality - printer quality
-        3 => "/ebook",        // Medium Quality - ebook (150 DPI)
-        4 => "/screen",       // Low Quality - screen viewing (72 DPI)
-        _ => "/printer",
-    }
-}
 
 #[tauri::command]
 pub async fn compress_pdf(
@@ -280,45 +256,26 @@ pub async fn compress_pdf(
     quality_level: u8,
 ) -> Result<PdfCompressionResult, String> {
     tokio::task::spawn_blocking(move || {
-        use std::process::Command;
-
-        // Create output path
-        let input_path_obj = std::path::Path::new(&input_path);
-        let stem = input_path_obj.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("compressed");
-        let parent = input_path_obj.parent()
-            .map(|p| p.to_str().unwrap_or(""))
-            .unwrap_or("");
-
-        let output_path = format!("{}/{}_compressed.pdf", parent, stem);
-
-        let pdf_settings = get_ghostscript_settings(quality_level);
+        let output_path = generate_output_path(&input_path, "compressed", "pdf");
+        let compression = CompressionLevel::from_u8(quality_level);
+        let pdf_settings = compression.ghostscript_settings();
 
         // Use ghostscript for PDF compression
-        let output = Command::new("gs")
-            .args(&[
-                "-sDEVICE=pdfwrite",
-                "-dCompatibilityLevel=1.4",
-                &format!("-dPDFSETTINGS={}", pdf_settings),
-                "-dNOPAUSE",
-                "-dQUIET",
-                "-dBATCH",
-                &format!("-sOutputFile={}", output_path),
-                &input_path,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to run ghostscript. Is it installed? Error: {}", e))?;
-
-        if !output.status.success() {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Ghostscript compression failed: {}", error_msg));
-        }
+        let executor = GhostscriptExecutor;
+        let output = executor.execute_strings(vec![
+            "-sDEVICE=pdfwrite".to_string(),
+            "-dCompatibilityLevel=1.4".to_string(),
+            format!("-dPDFSETTINGS={}", pdf_settings),
+            "-dNOPAUSE".to_string(),
+            "-dQUIET".to_string(),
+            "-dBATCH".to_string(),
+            format!("-sOutputFile={}", output_path),
+            input_path,
+        ])?;
+        validate_output(&output)?;
 
         // Get output file size
-        let file_size = std::fs::metadata(&output_path)
-            .map_err(|e| format!("Failed to get output file size: {}", e))?
-            .len();
+        let file_size = get_file_metadata(&output_path)?.size;
 
         Ok::<PdfCompressionResult, String>(PdfCompressionResult {
             output_path,
@@ -335,22 +292,9 @@ pub async fn estimate_pdf_compressed_size(
     quality_level: u8,
 ) -> Result<u64, String> {
     tokio::task::spawn_blocking(move || {
-        // Get original file size
-        let original_size = std::fs::metadata(&input_path)
-            .map_err(|e| format!("Failed to get file size: {}", e))?
-            .len();
-
-        // Use heuristic reduction factors based on quality level
-        let reduction_factor = match quality_level {
-            0 => 0.95,  // Lossless - minimal compression (5%)
-            1 => 0.70,  // Near Lossless - moderate compression (30%)
-            2 => 0.50,  // High Quality - good compression (50%)
-            3 => 0.30,  // Medium Quality - significant compression (70%)
-            4 => 0.15,  // Low Quality - aggressive compression (85%)
-            _ => 0.50,
-        };
-
-        let estimated_size = (original_size as f64 * reduction_factor) as u64;
+        let file_metadata = get_file_metadata(&input_path)?;
+        let compression = CompressionLevel::from_u8(quality_level);
+        let estimated_size = (file_metadata.size as f64 * compression.size_reduction_factor()) as u64;
 
         Ok::<u64, String>(estimated_size)
     })

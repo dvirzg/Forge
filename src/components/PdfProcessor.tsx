@@ -13,6 +13,7 @@ import { Toast } from './shared/Toast';
 import { MetadataSection } from './shared/MetadataSection';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { MergePdfView } from './merge/MergePdfView';
+import { formatFileSize } from '../utils/fileUtils';
 
 
 interface PdfProcessorProps {
@@ -111,7 +112,6 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [showTextPopup, setShowTextPopup] = useState(false);
   const [textPopupPosition, setTextPopupPosition] = useState<{ x: number; y: number } | null>(null);
-  const [draggedSignature, setDraggedSignature] = useState<string | null>(null);
   const pdfDocRef = useRef<PDFDocument | null>(null);
   const pageDimensionsRef = useRef<Map<number, { width: number; height: number }>>(new Map());
 
@@ -418,13 +418,6 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
   const hasExtendedMetadata = (): boolean => {
     if (!metadata) return false;
     return Object.keys(metadata.all_metadata).length > 0;
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
   const handleOpenPdfWindow = async () => {

@@ -1,6 +1,7 @@
 use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
 use chrono;
+use crate::utils::file_metadata::get_file_metadata;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReplaceParams {
@@ -56,25 +57,7 @@ pub async fn get_text_metadata(input_path: String) -> Result<TextMetadata, Strin
             .map_err(|e| format!("Failed to read text file: {}", e))?;
 
         // Get file metadata
-        let file_metadata = std::fs::metadata(&input_path)
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-        let file_size = file_metadata.len();
-        
-        let file_created = file_metadata.created()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
-        
-        let file_modified = file_metadata.modified()
-            .ok()
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            });
+        let file_metadata = get_file_metadata(&input_path)?;
 
         // Calculate text statistics
         let line_count = content.lines().count() as u64;
@@ -100,14 +83,14 @@ pub async fn get_text_metadata(input_path: String) -> Result<TextMetadata, Strin
         };
 
         Ok::<TextMetadata, String>(TextMetadata {
-            file_size,
+            file_size: file_metadata.size,
             line_count,
             character_count,
             word_count,
             encoding,
             line_endings,
-            file_created,
-            file_modified,
+            file_created: file_metadata.created,
+            file_modified: file_metadata.modified,
         })
     })
     .await

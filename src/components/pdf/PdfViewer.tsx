@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
+import { Document, Page } from 'react-pdf';
 import { FileText } from 'lucide-react';
 import { ZoomState } from '../../utils/pdfUtils';
 
@@ -50,6 +50,8 @@ interface PdfViewerProps {
   textPopupPosition: { x: number; y: number } | null;
   markupColor: string;
   pageWidth: number;
+  pageContainerRef?: React.RefObject<HTMLDivElement>;
+  pageElementRef?: React.RefObject<HTMLDivElement>;
   onMouseDown: (e: React.MouseEvent) => void;
   onMouseMove: (e: React.MouseEvent) => void;
   onMouseUp: () => void;
@@ -83,32 +85,29 @@ export function PdfViewer({
   textPopupPosition,
   markupColor,
   pageWidth,
+  pageContainerRef: externalPageContainerRef,
+  pageElementRef: externalPageElementRef,
   onMouseDown,
   onMouseMove,
   onMouseUp,
   onWheel,
   onHighlightSelection,
   onMarkupColorChange,
+  onTextPopupClose,
 }: PdfViewerProps) {
-  const pageContainerRef = useRef<HTMLDivElement>(null);
-  const pageElementRef = useRef<HTMLDivElement>(null);
+  const internalPageContainerRef = useRef<HTMLDivElement>(null);
+  const internalPageElementRef = useRef<HTMLDivElement>(null);
+  const pageContainerRef = externalPageContainerRef || internalPageContainerRef;
+  const pageElementRef = externalPageElementRef || internalPageElementRef;
 
   // Calculate page size to fit viewport
   const calculatePageSize = useCallback(async () => {
     if (typeof window === 'undefined' || !pdfData || !numPages || !pageContainerRef.current) return;
 
     try {
-      const pdf = await pdfjs.getDocument(pdfData).promise;
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: 1.0 });
-
-      const containerRect = pageContainerRef.current.getBoundingClientRect();
-      const padding = 20;
-      const availableWidth = containerRect.width - padding * 2;
-      const availableHeight = containerRect.height - padding * 2;
-
       // Page size calculation is handled in parent component
       // This effect is kept for ResizeObserver setup
+      // The refs are used by the parent for coordinate conversion
     } catch (error) {
       console.error('Failed to calculate page size:', error);
     }
@@ -312,6 +311,13 @@ export function PdfViewer({
               className="w-6 h-6 rounded cursor-pointer border border-white/20"
               title="Choose highlight color"
             />
+            <button
+              onClick={onTextPopupClose}
+              className="px-2 py-1 text-white/60 hover:text-white transition-colors"
+              title="Close"
+            >
+              ×
+            </button>
           </div>
         </div>
       )}

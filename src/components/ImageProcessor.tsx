@@ -1,39 +1,30 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { save } from '@tauri-apps/api/dialog';
-import { readBinaryFile, writeBinaryFile, removeFile, createDir, renameFile } from '@tauri-apps/api/fs';
+import { readBinaryFile, writeBinaryFile, renameFile } from '@tauri-apps/api/fs';
 import { join, dirname } from '@tauri-apps/api/path';
-import { appDataDir } from '@tauri-apps/api/path';
-import Cropper from 'react-cropper';
-import 'cropperjs/dist/cropper.css';
 import {
-  RotateCw,
-  FlipHorizontal,
-  FlipVertical,
-  Sparkles,
-  Download,
-  ChevronDown,
   Save,
   FileDown,
   RotateCcw,
-  Scissors,
-  Check,
-  X,
-  ExternalLink,
   Trash2,
-  Gauge
+  ExternalLink,
 } from 'lucide-react';
 import { Header } from './shared/Header';
 import { CollapsibleSection } from './shared/CollapsibleSection';
 import { ActionButton } from './shared/ActionButton';
 import { MetadataDetailModal } from './shared/MetadataDetailModal';
 import { Toast } from './shared/Toast';
-import { CompressionSlider } from './shared/CompressionSlider';
-import { FileSizeComparison } from './shared/FileSizeComparison';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useImageTransform } from '../hooks/useImageTransform';
 import { loadImageAsDataUrl } from '../utils/fileLoaders';
 import { formatFileSize } from '../utils/fileUtils';
+import { ImagePreview } from './image/ImagePreview';
+import { ImageAITools } from './image/ImageAITools';
+import { ImageTransformTools } from './image/ImageTransformTools';
+import { ImageConvertTools } from './image/ImageConvertTools';
+import { ImageCompressTools } from './image/ImageCompressTools';
 
 interface ImageProcessorProps {
   file: {
@@ -61,17 +52,26 @@ interface ImageMetadata {
 function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const [metadata, setMetadata] = useState<ImageMetadata | null>(null);
   const { toast, showToast } = useToast();
-  const { processing, setProcessing, withProcessing } = useProcessing();
+  const { processing, withProcessing } = useProcessing();
+  const {
+    transformedImageData,
+    currentWorkingPath,
+    tempFilePath,
+    hasUnsavedChanges,
+    setTransformedImageData,
+    setHasUnsavedChanges,
+    setCurrentWorkingPath,
+    applyTransformation,
+    cleanup,
+    reset: resetTransform,
+  } = useImageTransform();
+
   const [modelAvailable, setModelAvailable] = useState<boolean | null>(null);
   const [downloadingModel, setDownloadingModel] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageSrc, setImageSrc] = useState<string>('');
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  const [transformedImageData, setTransformedImageData] = useState<Uint8Array | null>(null);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [currentWorkingPath, setCurrentWorkingPath] = useState<string | null>(null);
-  const [tempFilePath, setTempFilePath] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [editedFileName, setEditedFileName] = useState<string>('');
   const [displayFileName, setDisplayFileName] = useState<string>(file.name);
@@ -82,10 +82,11 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const [customFormat, setCustomFormat] = useState('');
 
   // Compression state
-  const [compressionLevel, setCompressionLevel] = useState(2); // Default: High Quality
+  const [compressionLevel, setCompressionLevel] = useState(2);
   const [compressionFormat, setCompressionFormat] = useState('jpg');
   const [estimatedSize, setEstimatedSize] = useState<number | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
+  const [showMetadataDetail, setShowMetadataDetail] = useState(false);
 
   // Load image as base64
   useEffect(() => {
@@ -103,15 +104,8 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         setIsCropping(false);
         
         // Clean up any existing temp file
-        if (tempFilePath) {
-          try {
-            await removeFile(tempFilePath);
-          } catch (e) {
-            // Ignore cleanup errors
-          }
-        }
-        setCurrentWorkingPath(null);
-        setTempFilePath(null);
+        await cleanup(tempFilePath, currentFilePath);
+        resetTransform();
       } catch (error) {
         console.error('Failed to load image:', error);
         setImageError(true);
@@ -120,6 +114,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     };
 
     loadImage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.path]);
 
   // Check if background removal model is available
@@ -132,7 +127,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     }
   };
 
-  // Download the background removal model
   const handleDownloadModel = async () => {
     try {
       setDownloadingModel(true);
@@ -148,7 +142,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     }
   };
 
-  // Check model on component mount
   useEffect(() => {
     checkModel();
   }, []);
@@ -168,10 +161,8 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     fetchMetadata();
   }, [currentFilePath]);
 
-
   const handleRemoveBackground = async () => {
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
       showToast('Removing background...');
 
       const outputPath = await save({
@@ -189,117 +180,39 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       });
 
       showToast(result);
-    } catch (error) {
+    }, (error) => {
       showToast(`Error: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleRotate = async (degrees: number) => {
-    try {
-      setProcessing(true);
-
+    await withProcessing(async () => {
       const inputPath = currentWorkingPath || currentFilePath;
       const imageBytes = await invoke<number[]>('rotate_image_preview', {
         inputPath,
         degrees,
       });
 
-      const uint8Array = new Uint8Array(imageBytes);
-      setTransformedImageData(uint8Array);
-      
-      // Save to temp file for next transformation
-      const dataDir = await appDataDir();
-      
-      // Ensure the directory exists
-      try {
-        await createDir(dataDir, { recursive: true });
-      } catch (e) {
-        // Directory might already exist, ignore
-      }
-      
-      const tempPath = await join(dataDir, `temp_transform_${Date.now()}.png`);
-      
-      // Clean up old temp file if it exists
-      if (tempFilePath && tempFilePath !== currentFilePath) {
-        try {
-          await removeFile(tempFilePath);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      
-      await writeBinaryFile(tempPath, uint8Array);
-      setTempFilePath(tempPath);
-      setCurrentWorkingPath(tempPath);
-      
-      const blob = new Blob([uint8Array.buffer]);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImageSrc(reader.result as string);
-      };
-      reader.readAsDataURL(blob);
-      
-      setHasUnsavedChanges(true);
-    } catch (error) {
+      const { dataUrl } = await applyTransformation(imageBytes, currentFilePath, tempFilePath);
+      setImageSrc(dataUrl);
+    }, (error) => {
       showToast(`Error: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleFlip = async (direction: 'horizontal' | 'vertical') => {
-    try {
-      setProcessing(true);
-
+    await withProcessing(async () => {
       const inputPath = currentWorkingPath || currentFilePath;
       const imageBytes = await invoke<number[]>('flip_image_preview', {
         inputPath,
         direction,
       });
 
-      const uint8Array = new Uint8Array(imageBytes);
-      setTransformedImageData(uint8Array);
-      
-      // Save to temp file for next transformation
-      const dataDir = await appDataDir();
-      
-      // Ensure the directory exists
-      try {
-        await createDir(dataDir, { recursive: true });
-      } catch (e) {
-        // Directory might already exist, ignore
-      }
-      
-      const tempPath = await join(dataDir, `temp_transform_${Date.now()}.png`);
-      
-      // Clean up old temp file if it exists
-      if (tempFilePath && tempFilePath !== currentFilePath) {
-        try {
-          await removeFile(tempFilePath);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      
-      await writeBinaryFile(tempPath, uint8Array);
-      setTempFilePath(tempPath);
-      setCurrentWorkingPath(tempPath);
-      
-      const blob = new Blob([uint8Array.buffer]);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImageSrc(reader.result as string);
-      };
-      reader.readAsDataURL(blob);
-      
-      setHasUnsavedChanges(true);
-    } catch (error) {
+      const { dataUrl } = await applyTransformation(imageBytes, currentFilePath, tempFilePath);
+      setImageSrc(dataUrl);
+    }, (error) => {
       showToast(`Error: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleCrop = async () => {
@@ -308,15 +221,12 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
 
     if (!cropper || !metadata) return;
 
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
       showToast('Cropping image...');
 
-      // Get crop data from cropper.js
-      const cropData = cropper.getData(true); // true = rounded values
+      const cropData = cropper.getData(true);
       const imageData = cropper.getImageData();
 
-      // Calculate actual pixel coordinates
       const scaleX = imageData.naturalWidth / imageData.width;
       const scaleY = imageData.naturalHeight / imageData.height;
 
@@ -336,47 +246,13 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         },
       });
 
-      const uint8Array = new Uint8Array(imageBytes);
-      setTransformedImageData(uint8Array);
-      
-      // Save to temp file for next transformation
-      const dataDir = await appDataDir();
-      
-      try {
-        await createDir(dataDir, { recursive: true });
-      } catch (e) {
-        // Directory might already exist, ignore
-      }
-      
-      const tempPath = await join(dataDir, `temp_transform_${Date.now()}.png`);
-      
-      if (tempFilePath && tempFilePath !== currentFilePath) {
-        try {
-          await removeFile(tempFilePath);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      
-      await writeBinaryFile(tempPath, uint8Array);
-      setTempFilePath(tempPath);
-      setCurrentWorkingPath(tempPath);
-      
-      const blob = new Blob([uint8Array.buffer]);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImageSrc(reader.result as string);
-      };
-      reader.readAsDataURL(blob);
-      
-      setHasUnsavedChanges(true);
+      const { dataUrl } = await applyTransformation(imageBytes, currentFilePath, tempFilePath);
+      setImageSrc(dataUrl);
       setIsCropping(false);
       showToast('Image cropped');
-    } catch (error) {
+    }, (error) => {
       showToast(`Error: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const cancelCrop = () => {
@@ -390,8 +266,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const handleSave = async (overwriteOriginal: boolean = false) => {
     if (!transformedImageData) return;
 
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
       showToast('Saving...');
 
       let outputPath: string | null;
@@ -405,7 +280,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         });
 
         if (!outputPath) {
-          // Operation cancelled - no toast needed
           return;
         }
       }
@@ -415,17 +289,9 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       setHasUnsavedChanges(false);
       showToast('Saved successfully');
       
-      // Clean up temp file
-      if (tempFilePath && tempFilePath !== currentFilePath) {
-        try {
-          await removeFile(tempFilePath);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
+      await cleanup(tempFilePath, currentFilePath);
       
       if (overwriteOriginal) {
-        // Reload the image from the updated file
         const imageData = await readBinaryFile(currentFilePath);
         const blob = new Blob([imageData as BlobPart]);
         const reader = new FileReader();
@@ -434,35 +300,19 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         };
         reader.readAsDataURL(blob);
         setTransformedImageData(null);
-        setCurrentWorkingPath(null);
-        setTempFilePath(null);
+        resetTransform();
       } else {
-        // Reset to original for new transformations
-        setCurrentWorkingPath(null);
-        setTempFilePath(null);
-        setTransformedImageData(null);
+        resetTransform();
       }
-    } catch (error) {
+    }, (error) => {
       showToast(`Error saving: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleRevert = async () => {
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
+      await cleanup(tempFilePath, currentFilePath);
       
-      // Clean up temp file
-      if (tempFilePath && tempFilePath !== currentFilePath) {
-        try {
-          await removeFile(tempFilePath);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      
-      // Reload the original image
       const imageData = await readBinaryFile(file.path);
       const blob = new Blob([imageData as BlobPart]);
       const reader = new FileReader();
@@ -471,15 +321,10 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       };
       reader.readAsDataURL(blob);
       
-      setTransformedImageData(null);
-      setCurrentWorkingPath(null);
-      setTempFilePath(null);
-      setHasUnsavedChanges(false);
-    } catch (error) {
+      resetTransform();
+    }, (error) => {
       showToast(`Error: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleRenameSave = async () => {
@@ -505,8 +350,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   };
 
   const handleConvert = async (format: string) => {
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
       showToast(`Converting to ${format.toUpperCase()}...`);
 
       const outputPath = await save({
@@ -525,16 +369,14 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       });
 
       showToast(`Converted to ${format.toUpperCase()} successfully`);
-    } catch (error) {
+    }, (error) => {
       const errorMsg = String(error);
       if (errorMsg.includes('Unsupported format') || errorMsg.includes('incompatible')) {
         showToast(`Incompatible format: ${format.toUpperCase()}`);
       } else {
         showToast(`Error: ${error}`);
       }
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleCustomFormatSubmit = async () => {
@@ -558,7 +400,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const handleCompressionLevelChange = async (level: number) => {
     setCompressionLevel(level);
 
-    // Estimate size when level changes
     if (metadata) {
       try {
         setIsEstimating(true);
@@ -581,7 +422,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const handleCompressionFormatChange = async (format: string) => {
     setCompressionFormat(format);
 
-    // Re-estimate size with new format
     if (metadata) {
       try {
         setIsEstimating(true);
@@ -602,8 +442,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   };
 
   const handleCompress = async () => {
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
       showToast('Compressing image...');
 
       const inputPath = currentWorkingPath || currentFilePath;
@@ -624,29 +463,23 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         showToast('Image compressed (similar size)');
       }
 
-      // Update the current file path to the compressed file
       setCurrentFilePath(result.output_path);
       setCurrentWorkingPath(result.output_path);
       setDisplayFileName(result.output_path.split('/').pop() || displayFileName);
 
-      // Reload metadata for the new file
       const newMetadata = await invoke<ImageMetadata>('get_image_metadata', {
         inputPath: result.output_path,
       });
       setMetadata(newMetadata);
 
-      // Reset estimation
       setEstimatedSize(null);
-    } catch (error) {
+    }, (error) => {
       showToast(`Compression failed: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleStripMetadata = async () => {
-    try {
-      setProcessing(true);
+    await withProcessing(async () => {
       showToast('Stripping metadata...');
 
       const inputPath = currentWorkingPath || currentFilePath;
@@ -654,54 +487,18 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         inputPath,
       });
 
-      const uint8Array = new Uint8Array(imageBytes);
-      setTransformedImageData(uint8Array);
+      const { dataUrl, tempPath } = await applyTransformation(imageBytes, currentFilePath, tempFilePath);
+      setImageSrc(dataUrl);
       
-      // Save to temp file for next transformation
-      const dataDir = await appDataDir();
-      
-      try {
-        await createDir(dataDir, { recursive: true });
-      } catch (e) {
-        // Directory might already exist, ignore
-      }
-      
-      const tempPath = await join(dataDir, `temp_strip_metadata_${Date.now()}.png`);
-      
-      // Clean up old temp file if it exists
-      if (tempFilePath && tempFilePath !== currentFilePath) {
-        try {
-          await removeFile(tempFilePath);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      
-      await writeBinaryFile(tempPath, uint8Array);
-      setTempFilePath(tempPath);
-      setCurrentWorkingPath(tempPath);
-      
-      // Update preview
-      const blob = new Blob([uint8Array.buffer]);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImageSrc(reader.result as string);
-      };
-      reader.readAsDataURL(blob);
-      
-      // Update metadata to show stripped version
       const strippedMetadata = await invoke<ImageMetadata>('get_image_metadata', {
         inputPath: tempPath,
       });
       setMetadata(strippedMetadata);
       
-      setHasUnsavedChanges(true);
       showToast('Metadata stripped');
-    } catch (error) {
+    }, (error) => {
       showToast(`Error: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const toggleCard = (cardId: string) => {
@@ -742,9 +539,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
            Object.keys(metadata.iptc).length > 0 || 
            Object.keys(metadata.xmp).length > 0;
   };
-
-
-  const [showMetadataDetail, setShowMetadataDetail] = useState(false);
 
   return (
     <div className="h-full flex flex-col">
@@ -799,315 +593,76 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       <div className="flex-1 flex gap-6 min-h-0 items-start">
         {/* Preview */}
         <div className="flex-1 rounded-3xl p-6 flex items-center justify-center min-w-0 relative" style={{ overflow: isCropping ? 'visible' : 'hidden' }}>
-          {imageLoading ? (
-            <div className="text-white/60 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/60 mx-auto mb-2"></div>
-              <p className="text-sm">Loading image...</p>
-            </div>
-          ) : imageError ? (
-            <div className="text-white/60 text-center">
-              <p className="text-sm mb-2">Failed to load image</p>
-              <p className="text-xs text-white/40">{file.path}</p>
-            </div>
-          ) : isCropping ? (
-            <div className="flex flex-col items-center justify-center w-full max-w-full max-h-full gap-4">
-              <div className="relative w-full max-w-full max-h-full flex items-center justify-center">
-                <Cropper
-                  ref={cropperRef}
-                  src={imageSrc}
-                  style={{ height: '100%', width: '100%' }}
-                  aspectRatio={NaN}
-                  guides={true}
-                  viewMode={1}
-                  minCropBoxHeight={20}
-                  minCropBoxWidth={20}
-                  background={false}
-                  responsive={true}
-                  autoCropArea={0.8}
-                  checkOrientation={false}
-                  modal={false}
-                  ready={() => {
-                    const imageElement = cropperRef?.current;
-                    const cropper = (imageElement as any)?.cropper;
-                    if (cropper) {
-                      const imageData = cropper.getImageData();
-                      
-                      // Calculate minimum canvas size to prevent zooming out beyond image
-                      const minCanvasWidth = imageData.naturalWidth;
-                      const minCanvasHeight = imageData.naturalHeight;
-                      
-                      // Set minimum canvas dimensions
-                      cropper.setCanvasData({
-                        minWidth: minCanvasWidth,
-                        minHeight: minCanvasHeight,
-                      });
-                    }
-                  }}
-                  zoom={(event) => {
-                    const imageElement = cropperRef?.current;
-                    const cropper = (imageElement as any)?.cropper;
-                    if (cropper && event.detail.ratio !== undefined) {
-                      const imageData = cropper.getImageData();
-                      const containerData = cropper.getContainerData();
-                      
-                      // Calculate minimum zoom ratio to fit image in container
-                      const minZoomRatio = Math.min(
-                        containerData.width / imageData.naturalWidth,
-                        containerData.height / imageData.naturalHeight
-                      );
-                      
-                      // Prevent zooming out beyond minimum
-                      if (event.detail.ratio < minZoomRatio) {
-                        event.preventDefault();
-                        cropper.zoomTo(minZoomRatio);
-                      }
-                    }
-                  }}
-                />
-              </div>
-              {/* Crop action buttons - below the image */}
-              <div className="flex gap-2 pointer-events-auto">
-                <button
-                  onClick={handleCrop}
-                  disabled={processing}
-                  className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105 bg-green-500/30 shadow-lg"
-                  title="Apply Crop"
-                >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={cancelCrop}
-                  disabled={processing}
-                  className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105 shadow-lg"
-                  title="Cancel"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ) : (
-            <img
-              src={imageSrc}
-              alt="Preview"
-              className="max-w-full max-h-full object-contain rounded-2xl"
-              onError={(e) => {
-                console.error('Image load error:', e);
-                console.error('Failed src:', imageSrc);
-                setImageError(true);
-              }}
-            />
-          )}
+          <ImagePreview
+            imageSrc={imageSrc}
+            imageLoading={imageLoading}
+            imageError={imageError}
+            filePath={file.path}
+            isCropping={isCropping}
+            cropperRef={cropperRef}
+            processing={processing}
+            onCrop={handleCrop}
+            onCancelCrop={cancelCrop}
+            onImageError={() => setImageError(true)}
+          />
         </div>
 
         {/* Controls */}
         <div className="w-80 flex flex-col gap-4 overflow-y-auto overflow-x-visible flex-shrink-0 pt-6 pb-6 px-1">
           {/* AI Tools */}
-          <CollapsibleSection
-            id="ai-tools"
-            title="AI Tools"
-            icon={Sparkles}
-            isExpanded={expandedCard === 'ai-tools'}
-            onToggle={toggleCard}
-          >
-            <div>
-              {modelAvailable === false && (
-                <div className="mb-3 p-3 bg-yellow-500/20 rounded-xl border border-yellow-500/30">
-                  <p className="text-yellow-200 text-xs mb-2">AI model not installed</p>
-                  <ActionButton
-                    onClick={handleDownloadModel}
-                    disabled={downloadingModel}
-                    className="w-full px-4 py-2 rounded-xl text-xs bg-blue-500/30"
-                  >
-                    {downloadingModel ? 'Downloading...' : 'Download AI Model'}
-                  </ActionButton>
-                </div>
-              )}
-              <ActionButton
-                onClick={handleRemoveBackground}
-                disabled={processing || modelAvailable === false || downloadingModel}
-                className="w-full"
-              >
-                Remove Background
-              </ActionButton>
-            </div>
-          </CollapsibleSection>
+          <ImageAITools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            modelAvailable={modelAvailable}
+            downloadingModel={downloadingModel}
+            processing={processing}
+            onDownloadModel={handleDownloadModel}
+            onRemoveBackground={handleRemoveBackground}
+          />
 
           {/* Transform */}
-          <CollapsibleSection
-            id="transform"
-            title="Transform"
-            icon={RotateCw}
-            isExpanded={expandedCard === 'transform'}
-            onToggle={toggleCard}
-          >
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              <ActionButton onClick={() => handleRotate(90)} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                90°
-              </ActionButton>
-              <ActionButton onClick={() => handleRotate(180)} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                180°
-              </ActionButton>
-              <ActionButton onClick={() => handleRotate(270)} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                270°
-              </ActionButton>
-            </div>
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <ActionButton
-                onClick={() => handleFlip('horizontal')}
-                disabled={processing}
-                className="px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2"
-              >
-                <FlipHorizontal className="w-3 h-3" />
-                Flip H
-              </ActionButton>
-              <ActionButton
-                onClick={() => handleFlip('vertical')}
-                disabled={processing}
-                className="px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2"
-              >
-                <FlipVertical className="w-3 h-3" />
-                Flip V
-              </ActionButton>
-            </div>
-            <ActionButton
-              onClick={initializeCrop}
-              disabled={processing || isCropping}
-              className="w-full flex items-center justify-center gap-2"
-            >
-              <Scissors className="w-4 h-4" />
-              Crop Image
-            </ActionButton>
-          </CollapsibleSection>
+          <ImageTransformTools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            processing={processing}
+            isCropping={isCropping}
+            onRotate={handleRotate}
+            onFlip={handleFlip}
+            onInitializeCrop={initializeCrop}
+          />
 
           {/* Convert */}
-          {(!expandedCard || expandedCard === 'convert') && (
-            <div>
-              <button
-                onClick={() => toggleCard('convert')}
-                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Download className="w-4 h-4" />
-                  Convert Format
-                </div>
-                <ChevronDown
-                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                    expandedCard === 'convert' ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-            {expandedCard === 'convert' && (
-              <div className="mt-4">
-                <div className="grid grid-cols-3 gap-2">
-                  {['png', 'jpg', 'webp', 'gif', 'bmp'].map((format) => (
-                    <button
-                      key={format}
-                      onClick={() => handleConvert(format)}
-                      disabled={processing}
-                      className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50 uppercase"
-                    >
-                      {format}
-                    </button>
-                  ))}
-                  {isEditingCustomFormat ? (
-                    <input
-                      type="text"
-                      value={customFormat}
-                      onChange={(e) => setCustomFormat(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleCustomFormatSubmit();
-                        } else if (e.key === 'Escape') {
-                          setIsEditingCustomFormat(false);
-                          setCustomFormat('');
-                        }
-                      }}
-                      onBlur={handleCustomFormatSubmit}
-                      className="glass-card px-3 py-2 rounded-xl text-white text-xs bg-transparent border border-white/20 focus:border-white/40 focus:outline-none uppercase"
-                      placeholder="EXT"
-                      autoFocus
-                    />
-                  ) : (
-                    <button
-                      onClick={() => setIsEditingCustomFormat(true)}
-                      disabled={processing}
-                      className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
-                    >
-                      Other
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-            </div>
-          )}
+          <ImageConvertTools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            processing={processing}
+            isEditingCustomFormat={isEditingCustomFormat}
+            customFormat={customFormat}
+            onFormatChange={handleConvert}
+            onCustomFormatChange={setCustomFormat}
+            onCustomFormatSubmit={handleCustomFormatSubmit}
+            onStartEditingCustomFormat={() => setIsEditingCustomFormat(true)}
+            onCancelEditingCustomFormat={() => {
+              setIsEditingCustomFormat(false);
+              setCustomFormat('');
+            }}
+          />
 
           {/* Compress & Optimize */}
-          {(!expandedCard || expandedCard === 'compress') && (
-            <div>
-              <button
-                onClick={() => toggleCard('compress')}
-                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Gauge className="w-4 h-4" />
-                  Compress & Optimize
-                </div>
-                <ChevronDown
-                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                    expandedCard === 'compress' ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-            {expandedCard === 'compress' && (
-              <div className="mt-4 space-y-4">
-                <CompressionSlider
-                  value={compressionLevel}
-                  onChange={handleCompressionLevelChange}
-                  disabled={processing}
-                />
-
-                <div className="space-y-2">
-                  <label className="text-xs text-white/70 uppercase tracking-wide">
-                    Output Format
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['jpg', 'png', 'webp'].map((format) => (
-                      <button
-                        key={format}
-                        onClick={() => handleCompressionFormatChange(format)}
-                        disabled={processing}
-                        className={`glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50 uppercase ${
-                          compressionFormat === format
-                            ? 'bg-blue-500/30 border border-blue-400/50'
-                            : ''
-                        }`}
-                      >
-                        {format}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <FileSizeComparison
-                  originalSize={metadata?.file_size || 0}
-                  estimatedSize={estimatedSize}
-                  isEstimating={isEstimating}
-                />
-
-                <button
-                  onClick={handleCompress}
-                  disabled={processing || !metadata}
-                  className="w-full glass-card px-4 py-3 rounded-2xl text-white text-sm transition-all duration-300 disabled:opacity-50 hover:scale-105 bg-blue-500/30"
-                >
-                  Compress & Save
-                </button>
-              </div>
-            )}
-            </div>
-          )}
+          <ImageCompressTools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            processing={processing}
+            compressionLevel={compressionLevel}
+            compressionFormat={compressionFormat}
+            estimatedSize={estimatedSize}
+            isEstimating={isEstimating}
+            originalSize={metadata?.file_size || 0}
+            metadataAvailable={!!metadata}
+            onCompressionLevelChange={handleCompressionLevelChange}
+            onCompressionFormatChange={handleCompressionFormatChange}
+            onCompress={handleCompress}
+          />
 
           {/* Metadata */}
           <CollapsibleSection
@@ -1150,7 +705,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
               )}
             </div>
           </CollapsibleSection>
-
         </div>
       </div>
 

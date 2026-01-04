@@ -2,11 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { appWindow } from '@tauri-apps/api/window';
 import { X } from 'lucide-react';
-import ImageProcessor from './components/ImageProcessor';
-import PdfProcessor from './components/PdfProcessor';
-import VideoProcessor from './components/VideoProcessor';
-import TextProcessor from './components/TextProcessor';
 import { detectFileType } from './utils/fileType';
+import { getProcessorComponent } from './utils/processorRegistry';
 import { useWindowResize } from './hooks/useWindowResize';
 import { getFileName } from './utils/pathUtils';
 
@@ -95,18 +92,20 @@ function App() {
   const renderProcessor = () => {
     if (!droppedFile) return null;
 
-    switch (droppedFile.type) {
-      case 'image':
-        return <ImageProcessor file={droppedFile} onReset={handleReset} />;
-      case 'pdf':
-        return <PdfProcessor file={droppedFile} multiplePdfs={droppedFile.multiplePdfs} onReset={handleReset} />;
-      case 'video':
-        return <VideoProcessor file={droppedFile} onReset={handleReset} />;
-      case 'text':
-        return <TextProcessor file={droppedFile} onReset={handleReset} />;
-      default:
-        return null;
-    }
+    const ProcessorComponent = getProcessorComponent(droppedFile.type);
+    if (!ProcessorComponent) return null;
+
+    const extraProps = droppedFile.type === 'pdf' && droppedFile.multiplePdfs
+      ? { multiplePdfs: droppedFile.multiplePdfs }
+      : {};
+
+    return (
+      <ProcessorComponent
+        file={droppedFile}
+        onReset={handleReset}
+        {...extraProps}
+      />
+    );
   };
 
   return (

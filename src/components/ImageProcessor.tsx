@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { save } from '@tauri-apps/api/dialog';
 import { readBinaryFile, writeBinaryFile, renameFile } from '@tauri-apps/api/fs';
 import { join, dirname } from '@tauri-apps/api/path';
 import {
@@ -15,11 +14,12 @@ import { ProcessorLayout } from './shared/ProcessorLayout';
 import { Toast } from './shared/Toast';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useFileSave } from '../hooks/useFileSave';
 import { useMetadata } from '../hooks/useMetadata';
 import { useImageTransform } from '../hooks/useImageTransform';
 import { loadImageAsDataUrl } from '../utils/fileLoaders';
 import { formatFileSize } from '../utils/fileUtils';
-import { changeFileExtension, getFileName } from '../utils/pathUtils';
+import { generateOutputFileName, getFileName } from '../utils/pathUtils';
 import { BaseProcessorProps } from '../types/processor';
 import { ImagePreview } from './image/ImagePreview';
 import { ImageAITools } from './image/ImageAITools';
@@ -48,6 +48,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const [metadata, setMetadata] = useState<ImageMetadata | null>(null);
   const { toast, showToast } = useToast();
   const { processing, withProcessing } = useProcessing();
+  const saveFile = useFileSave();
   const {
     transformedImageData,
     currentWorkingPath,
@@ -160,10 +161,10 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     await withProcessing(async () => {
       showToast('Removing background...');
 
-      const outputPath = await save({
-        defaultPath: changeFileExtension(file.name, 'png').replace('.png', '_no_bg.png'),
-        filters: [{ name: 'Image', extensions: ['png'] }],
-      });
+      const outputPath = await saveFile(
+        generateOutputFileName(file.name, '_no_bg', 'png'),
+        [{ name: 'Image', extensions: ['png'] }]
+      );
 
       if (!outputPath) {
         return;
@@ -269,10 +270,10 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       if (overwriteOriginal) {
         outputPath = currentFilePath;
       } else {
-        outputPath = await save({
-          defaultPath: changeFileExtension(file.name, 'png').replace('.png', '_transformed.png'),
-          filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-        });
+        outputPath = await saveFile(
+          generateOutputFileName(file.name, '_transformed', 'png'),
+          [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+        );
 
         if (!outputPath) {
           return;
@@ -348,10 +349,10 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     await withProcessing(async () => {
       showToast(`Converting to ${format.toUpperCase()}...`);
 
-      const outputPath = await save({
-        defaultPath: changeFileExtension(file.name, format),
-        filters: [{ name: 'Image', extensions: [format] }],
-      });
+      const outputPath = await saveFile(
+        generateOutputFileName(file.name, '', format),
+        [{ name: 'Image', extensions: [format] }]
+      );
 
       if (!outputPath) {
         return;

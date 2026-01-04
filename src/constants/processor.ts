@@ -12,3 +12,22 @@ export const PROCESSOR_CONSTANTS = {
   HIGHLIGHT_OPACITY: 0.4,
   MIN_SELECTION_SIZE: 10, // Minimum size for zoom selection
 } as const;
+
+/**
+ * Video resolution presets
+ */
+export const VIDEO_RESOLUTIONS = {
+  '1080p': { width: 1920, height: 1080 },
+  '720p': { width: 1280, height: 720 },
+  '480p': { width: 854, height: 480 },
+} as const;
+
+/**
+ * Default video processing values
+ */
+export const VIDEO_DEFAULTS = {
+  WIDTH: 1280,
+  HEIGHT: 720,
+  GIF_WIDTH: 480,
+  FPS: 10,
+} as const;

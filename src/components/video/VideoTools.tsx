@@ -2,6 +2,7 @@ import { Scissors, Volume2, Maximize2, FileImage } from 'lucide-react';
 import { CollapsibleSection } from '../shared/CollapsibleSection';
 import { ActionButton } from '../shared/ActionButton';
 import { MetadataSection } from '../shared/MetadataSection';
+import { VIDEO_RESOLUTIONS } from '../../constants/processor';
 
 interface VideoToolsProps {
   expandedCard: string | null;
@@ -143,8 +144,8 @@ export function VideoTools({
           <div className="grid grid-cols-3 gap-2">
             <ActionButton
               onClick={() => {
-                onWidthChange(1920);
-                onHeightChange(1080);
+                onWidthChange(VIDEO_RESOLUTIONS['1080p'].width);
+                onHeightChange(VIDEO_RESOLUTIONS['1080p'].height);
               }}
               className="px-3 py-2 rounded-xl text-xs"
             >
@@ -152,8 +153,8 @@ export function VideoTools({
             </ActionButton>
             <ActionButton
               onClick={() => {
-                onWidthChange(1280);
-                onHeightChange(720);
+                onWidthChange(VIDEO_RESOLUTIONS['720p'].width);
+                onHeightChange(VIDEO_RESOLUTIONS['720p'].height);
               }}
               className="px-3 py-2 rounded-xl text-xs"
             >
@@ -161,8 +162,8 @@ export function VideoTools({
             </ActionButton>
             <ActionButton
               onClick={() => {
-                onWidthChange(854);
-                onHeightChange(480);
+                onWidthChange(VIDEO_RESOLUTIONS['480p'].width);
+                onHeightChange(VIDEO_RESOLUTIONS['480p'].height);
               }}
               className="px-3 py-2 rounded-xl text-xs"
             >

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { save } from '@tauri-apps/api/dialog';
 import { FileImage } from 'lucide-react';
 import { Header } from './shared/Header';
 import { MetadataDetailModal } from './shared/MetadataDetailModal';
@@ -11,7 +10,9 @@ import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
 import { useMetadata } from '../hooks/useMetadata';
 import { formatFileSize } from '../utils/fileUtils';
-import { changeFileExtension } from '../utils/pathUtils';
+import { generateOutputFileName } from '../utils/pathUtils';
+import { useFileSave } from '../hooks/useFileSave';
+import { VIDEO_DEFAULTS } from '../constants/processor';
 import { BaseProcessorProps } from '../types/processor';
 
 interface VideoProcessorProps extends BaseProcessorProps {}
@@ -26,15 +27,16 @@ interface VideoMetadata {
 function VideoProcessor({ file, onReset }: VideoProcessorProps) {
   const [startTime, setStartTime] = useState('00:00:00');
   const [endTime, setEndTime] = useState('00:00:10');
-  const [width, setWidth] = useState(1280);
-  const [height, setHeight] = useState(720);
-  const [fps, setFps] = useState(10);
-  const [gifWidth, setGifWidth] = useState(480);
+  const [width, setWidth] = useState(VIDEO_DEFAULTS.WIDTH);
+  const [height, setHeight] = useState(VIDEO_DEFAULTS.HEIGHT);
+  const [fps, setFps] = useState(VIDEO_DEFAULTS.FPS);
+  const [gifWidth, setGifWidth] = useState(VIDEO_DEFAULTS.GIF_WIDTH);
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [showMetadataDetail, setShowMetadataDetail] = useState(false);
   const { toast, showToast } = useToast();
   const { processing, withProcessing } = useProcessing();
+  const saveFile = useFileSave();
 
   useEffect(() => {
     const fetchMetadata = async () => {
@@ -54,13 +56,12 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
     await withProcessing(
       async () => {
         showToast('Trimming video...');
-        const outputPath = await save({
-          defaultPath: changeFileExtension(file.name, 'mp4').replace('.mp4', '_trimmed.mp4'),
-          filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }],
-        });
+        const outputPath = await saveFile(
+          generateOutputFileName(file.name, '_trimmed', 'mp4'),
+          [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }]
+        );
 
         if (!outputPath) {
-          showToast('Operation cancelled');
           return;
         }
 
@@ -81,13 +82,12 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
     await withProcessing(
       async () => {
         showToast('Removing audio...');
-        const outputPath = await save({
-          defaultPath: changeFileExtension(file.name, 'mp4').replace('.mp4', '_no_audio.mp4'),
-          filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }],
-        });
+        const outputPath = await saveFile(
+          generateOutputFileName(file.name, '_no_audio', 'mp4'),
+          [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }]
+        );
 
         if (!outputPath) {
-          showToast('Operation cancelled');
           return;
         }
 
@@ -106,13 +106,12 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
     await withProcessing(
       async () => {
         showToast(`Scaling to ${width}x${height}...`);
-        const outputPath = await save({
-          defaultPath: changeFileExtension(file.name, 'mp4').replace('.mp4', `_${width}x${height}.mp4`),
-          filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }],
-        });
+        const outputPath = await saveFile(
+          generateOutputFileName(file.name, `_${width}x${height}`, 'mp4'),
+          [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }]
+        );
 
         if (!outputPath) {
-          showToast('Operation cancelled');
           return;
         }
 
@@ -133,13 +132,12 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
     await withProcessing(
       async () => {
         showToast('Converting to GIF...');
-        const outputPath = await save({
-          defaultPath: changeFileExtension(file.name, 'gif'),
-          filters: [{ name: 'GIF', extensions: ['gif'] }],
-        });
+        const outputPath = await saveFile(
+          generateOutputFileName(file.name, '', 'gif'),
+          [{ name: 'GIF', extensions: ['gif'] }]
+        );
 
         if (!outputPath) {
-          showToast('Operation cancelled');
           return;
         }
 

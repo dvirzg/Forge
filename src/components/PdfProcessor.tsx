@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { save, open } from '@tauri-apps/api/dialog';
+import { open } from '@tauri-apps/api/dialog';
 import { readBinaryFile, writeBinaryFile } from '@tauri-apps/api/fs';
 import { Header } from './shared/Header';
 import { pdfjs } from 'react-pdf';
@@ -12,6 +12,8 @@ import { MergePdfView } from './merge/MergePdfView';
 import { formatFileSize } from '../utils/fileUtils';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useFileSave } from '../hooks/useFileSave';
+import { generateOutputFileName } from '../utils/pathUtils';
 import { useMetadata } from '../hooks/useMetadata';
 import { loadPdfAsBlobUrl } from '../utils/fileLoaders';
 import { screenToPdfCoords, hexToRgb, ZoomState, PageDimensions } from '../utils/pdfUtils';
@@ -116,6 +118,7 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
 
   const { toast, showToast } = useToast();
   const { processing, withProcessing } = useProcessing();
+  const saveFile = useFileSave();
 
   // Set up PDF.js worker
   useEffect(() => {
@@ -220,10 +223,10 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
     await withProcessing(async () => {
       showToast(`Rotating PDF ${degrees}°...`);
 
-      const outputPath = await save({
-        defaultPath: file.name.replace('.pdf', `_rotated${degrees}.pdf`),
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      });
+      const outputPath = await saveFile(
+        generateOutputFileName(file.name, `_rotated${degrees}`, 'pdf'),
+        [{ name: 'PDF', extensions: ['pdf'] }]
+      );
 
       if (!outputPath) {
         return;
@@ -794,10 +797,10 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
 
       const modifiedPdfBytes = await pdfDoc.save();
 
-      const outputPath = await save({
-        defaultPath: file.name.replace('.pdf', '_annotated.pdf'),
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      });
+      const outputPath = await saveFile(
+        generateOutputFileName(file.name, '_annotated', 'pdf'),
+        [{ name: 'PDF', extensions: ['pdf'] }]
+      );
 
       if (!outputPath) {
         return;
@@ -807,7 +810,7 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
       showToast('Annotations saved successfully!');
     }, (error) => {
       console.error('Error saving annotations:', error);
-      showToast(`Error saving annotations: ${error}`);
+      showToast(`Error: ${error}`);
     });
   };
 

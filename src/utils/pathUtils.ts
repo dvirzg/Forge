@@ -39,3 +39,20 @@ export function getDirectoryName(path: string): string {
   }
   return parts.slice(0, -1).join('/');
 }
+
+/**
+ * Generates an output filename with a suffix and optional extension
+ * @param fileName - Original filename
+ * @param suffix - Suffix to add before extension (e.g., '_trimmed', '_no_bg')
+ * @param extension - Optional new extension (defaults to original extension)
+ * @returns Generated filename with suffix
+ */
+export function generateOutputFileName(
+  fileName: string,
+  suffix: string,
+  extension?: string
+): string {
+  const ext = extension || getFileExtension(fileName);
+  const baseName = fileName.replace(/\.[^/.]+$/, '');
+  return `${baseName}${suffix}.${ext}`;
+}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { save } from '@tauri-apps/api/dialog';
 import { readBinaryFile } from '@tauri-apps/api/fs';
@@ -9,6 +9,8 @@ import { PdfFile, PdfPage, PdfMetadata } from './types';
 import { ActionButton } from '../shared/ActionButton';
 import { Toast } from '../shared/Toast';
 import { Header } from '../shared/Header';
+import { useToast } from '../../hooks/useToast';
+import { useProcessing } from '../../hooks/useProcessing';
 
 interface MergePdfViewProps {
   initialPdfs: Array<{ path: string; name: string }>;
@@ -19,26 +21,12 @@ export function MergePdfView({ initialPdfs, onReset }: MergePdfViewProps) {
   const [pdfFiles, setPdfFiles] = useState<PdfFile[]>([]);
   const [expandedPdfs, setExpandedPdfs] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
-  const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { toast, showToast } = useToast();
+  const { processing, withProcessing } = useProcessing();
 
   useEffect(() => {
     loadPdfFiles(initialPdfs);
   }, []);
-
-  const showToast = (message: string) => {
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
-    }
-
-    const id = Date.now();
-    setToast({ message, id });
-
-    toastTimeoutRef.current = setTimeout(() => {
-      setToast(null);
-    }, 3000);
-  };
 
   const loadPdfFiles = async (pdfs: Array<{ path: string; name: string }>) => {
     setLoading(true);
@@ -195,40 +183,37 @@ export function MergePdfView({ initialPdfs, onReset }: MergePdfViewProps) {
   };
 
   const handleMerge = async () => {
-    try {
-      setProcessing(true);
-      showToast('Preparing merge...');
+    await withProcessing(
+      async () => {
+        showToast('Preparing merge...');
 
-      const pageSelections = pdfFiles.map((pdf) => ({
-        pdf_path: pdf.path,
-        page_numbers: pdf.pages.map((page) => page.pageNumber),
-      }));
+        const pageSelections = pdfFiles.map((pdf) => ({
+          pdf_path: pdf.path,
+          page_numbers: pdf.pages.map((page) => page.pageNumber),
+        }));
 
-      const outputPath = await save({
-        defaultPath: 'merged.pdf',
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      });
+        const outputPath = await save({
+          defaultPath: 'merged.pdf',
+          filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        });
 
-      if (!outputPath) {
-        setProcessing(false);
-        return;
-      }
+        if (!outputPath) {
+          return;
+        }
 
-      const result = await invoke<string>('merge_pdfs_with_pages', {
-        pageSelections,
-        outputPath,
-      });
+        const result = await invoke<string>('merge_pdfs_with_pages', {
+          pageSelections,
+          outputPath,
+        });
 
-      showToast(result);
+        showToast(result);
 
-      setTimeout(() => {
-        onReset();
-      }, 2000);
-    } catch (error) {
-      showToast(`Merge failed: ${error}`);
-    } finally {
-      setProcessing(false);
-    }
+        setTimeout(() => {
+          onReset();
+        }, 2000);
+      },
+      (error) => showToast(`Merge failed: ${error}`)
+    );
   };
 
   useEffect(() => {

@@ -1,13 +1,13 @@
 import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { appWindow, LogicalSize, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/tauri';
+import { appWindow } from '@tauri-apps/api/window';
 import { X } from 'lucide-react';
 import ImageProcessor from './components/ImageProcessor';
 import PdfProcessor from './components/PdfProcessor';
 import VideoProcessor from './components/VideoProcessor';
 import TextProcessor from './components/TextProcessor';
-import { detectFileType, FILE_EXTENSIONS } from './utils/fileType';
+import { detectFileType } from './utils/fileType';
+import { useWindowResize } from './hooks/useWindowResize';
 
 type FileType = 'image' | 'pdf' | 'video' | 'text' | null;
 
@@ -48,74 +48,7 @@ function App() {
   }, []);
 
   // Resize window dynamically when file is dropped or reset
-  useEffect(() => {
-    const resizeWindow = async () => {
-      try {
-        if (droppedFile) {
-          // Get monitor size to calculate maximum dimensions (50% of screen)
-          // Use primary monitor for consistency across multi-monitor setups
-          // Fallback to current monitor if primary is unavailable
-          const primary = await primaryMonitor();
-          const current = await currentMonitor();
-          const monitor = primary || current;
-          const maxWidth = monitor ? monitor.size.width * 0.5 : 1920;
-          const maxHeight = monitor ? monitor.size.height * 0.5 : 1080;
-
-          // Minimum window size to fit all expanded cards
-          const minWidth = 800;
-          const minHeight = 600;
-
-          // Set minimum window size
-          await appWindow.setMinSize(new LogicalSize(minWidth, minHeight));
-
-          // Just resize, don't reposition for now
-          let newWidth = 1000;
-          let newHeight = 600;
-
-          try {
-            if (droppedFile.type === 'image') {
-              // Get image dimensions
-              const metadata = await invoke<{ width: number; height: number }>('get_image_metadata', {
-                inputPath: droppedFile.path,
-              });
-
-              // Calculate window size (add padding for UI controls ~400px width)
-              // Cap to 75% of screen size and ensure minimum
-              newWidth = Math.max(Math.min(metadata.width + 400, maxWidth), minWidth);
-              newHeight = Math.max(Math.min(metadata.height + 100, maxHeight), minHeight);
-            } else if (droppedFile.type === 'video' || droppedFile.type === 'pdf') {
-              newWidth = Math.max(Math.min(1000, maxWidth), minWidth);
-              newHeight = Math.max(Math.min(600, maxHeight), minHeight);
-            } else {
-              // For text/audio, use fixed size
-              newWidth = Math.max(Math.min(1000, maxWidth), minWidth);
-              newHeight = Math.max(Math.min(600, maxHeight), minHeight);
-            }
-          } catch (error) {
-            console.error('Error getting file metadata:', error);
-            newWidth = Math.max(Math.min(1000, maxWidth), minWidth);
-            newHeight = Math.max(Math.min(600, maxHeight), minHeight);
-          }
-
-          // Resize window
-          await appWindow.setSize(new LogicalSize(newWidth, newHeight));
-          // Center on screen
-          await appWindow.center();
-        } else {
-          // Reset minimum size to default
-          await appWindow.setMinSize(new LogicalSize(200, 150));
-          // Shrink to small default size
-          await appWindow.setSize(new LogicalSize(300, 200));
-          // Center on screen
-          await appWindow.center();
-        }
-      } catch (error) {
-        console.error('Error resizing window:', error);
-      }
-    };
-
-    resizeWindow();
-  }, [droppedFile]);
+  useWindowResize(droppedFile?.type || null, droppedFile?.path);
 
   const handleFileDrop = useCallback((filePaths: string | string[]) => {
     setIsDragging(false);

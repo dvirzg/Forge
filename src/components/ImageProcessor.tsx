@@ -11,9 +11,7 @@ import {
   FlipHorizontal,
   FlipVertical,
   Sparkles,
-  Trash2,
   Download,
-  ArrowLeft,
   ChevronDown,
   Save,
   FileDown,
@@ -22,10 +20,19 @@ import {
   Check,
   X,
   ExternalLink,
+  Trash2,
   Gauge
 } from 'lucide-react';
+import { Header } from './shared/Header';
+import { CollapsibleSection } from './shared/CollapsibleSection';
+import { ActionButton } from './shared/ActionButton';
+import { MetadataDetailModal } from './shared/MetadataDetailModal';
+import { Toast } from './shared/Toast';
 import { CompressionSlider } from './shared/CompressionSlider';
 import { FileSizeComparison } from './shared/FileSizeComparison';
+import { useToast } from '../hooks/useToast';
+import { useProcessing } from '../hooks/useProcessing';
+import { loadImageAsDataUrl } from '../utils/fileLoaders';
 import { formatFileSize } from '../utils/fileUtils';
 
 interface ImageProcessorProps {
@@ -52,26 +59,9 @@ interface ImageMetadata {
 }
 
 function ImageProcessor({ file, onReset }: ImageProcessorProps) {
-  const [processing, setProcessing] = useState(false);
-  const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [metadata, setMetadata] = useState<ImageMetadata | null>(null);
-  
-  // Helper function to show toast
-  const showToast = (message: string) => {
-    // Clear existing timeout
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
-    }
-    
-    const id = Date.now();
-    setToast({ message, id });
-    
-    // Auto-dismiss after 3 seconds
-    toastTimeoutRef.current = setTimeout(() => {
-      setToast(null);
-    }, 3000);
-  };
+  const { toast, showToast } = useToast();
+  const { processing, setProcessing, withProcessing } = useProcessing();
   const [modelAvailable, setModelAvailable] = useState<boolean | null>(null);
   const [downloadingModel, setDownloadingModel] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -103,19 +93,9 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       setImageLoading(true);
       setImageError(false);
       try {
-        const imageData = await readBinaryFile(currentFilePath);
-        const blob = new Blob([imageData as BlobPart]);
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setImageSrc(reader.result as string);
-          setImageLoading(false);
-        };
-        reader.onerror = () => {
-          console.error('Failed to read image file');
-          setImageError(true);
-          setImageLoading(false);
-        };
-        reader.readAsDataURL(blob);
+        const dataUrl = await loadImageAsDataUrl(currentFilePath);
+        setImageSrc(dataUrl);
+        setImageLoading(false);
         setTransformedImageData(null);
         setHasUnsavedChanges(false);
         setDisplayFileName(file.name);
@@ -764,95 +744,57 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   };
 
 
-  const handleOpenMetadataDetail = async () => {
-    const entries = getAllMetadataEntries();
-    if (entries.length === 0) return;
-    
-    try {
-      await invoke('open_metadata_window', {
-        metadata: entries,
-        windowTitle: `Metadata - ${displayFileName}`,
-      });
-    } catch (error) {
-      console.error('Failed to open metadata window:', error);
-      showToast(`Error opening metadata window: ${error}`);
-    }
-  };
+  const [showMetadataDetail, setShowMetadataDetail] = useState(false);
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onReset}
-            className="glass-card p-3 rounded-2xl transition-all duration-300 hover:scale-105"
-          >
-            <ArrowLeft className="w-5 h-5 text-white" />
-          </button>
-          <div>
-            <h2 className="text-2xl font-bold text-white">Image Processing</h2>
-            {isRenaming ? (
-              <input
-                type="text"
-                value={editedFileName}
-                onChange={(e) => setEditedFileName(e.target.value)}
-                onBlur={handleRenameSave}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    handleRenameSave();
-                  } else if (e.key === 'Escape') {
-                    setIsRenaming(false);
-                    setEditedFileName(displayFileName);
-                  }
-                }}
-                className="text-sm text-white/60 bg-transparent border-b border-white/30 focus:border-white/60 focus:outline-none px-1"
-                autoFocus
-              />
-            ) : (
-              <p
-                className="text-sm text-white/60 cursor-pointer hover:text-white/80 transition-colors"
-                onDoubleClick={() => {
-                  setIsRenaming(true);
-                  setEditedFileName(displayFileName);
-                }}
+      <Header
+        title="Image Processing"
+        fileName={displayFileName}
+        onBack={onReset}
+        isRenaming={isRenaming}
+        editedFileName={editedFileName}
+        onFileNameChange={setEditedFileName}
+        onRenameSave={handleRenameSave}
+        onRenameCancel={() => {
+          setIsRenaming(false);
+          setEditedFileName(displayFileName);
+        }}
+        onFileNameDoubleClick={() => {
+          setIsRenaming(true);
+          setEditedFileName(displayFileName);
+        }}
+        rightContent={
+          hasUnsavedChanges && (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleSave(false)}
+                disabled={processing}
+                className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105"
+                title="Save As New File"
               >
-                {displayFileName}
-              </p>
-            )}
-          </div>
-        </div>
-        
-        {/* Save Buttons - appears when there are unsaved changes */}
-        {hasUnsavedChanges && (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => handleSave(false)}
-              disabled={processing}
-              className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105"
-              title="Save As New File"
-            >
-              <FileDown className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => handleSave(true)}
-              disabled={processing}
-              className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105 bg-blue-500/30"
-              title="Overwrite Original"
-            >
-              <Save className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleRevert}
-              disabled={processing}
-              className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105"
-              title="Revert Back To Original"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-      </div>
+                <FileDown className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => handleSave(true)}
+                disabled={processing}
+                className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105 bg-blue-500/30"
+                title="Overwrite Original"
+              >
+                <Save className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleRevert}
+                disabled={processing}
+                className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105"
+                title="Revert Back To Original"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            </div>
+          )
+        }
+      />
 
       <div className="flex-1 flex gap-6 min-h-0 items-start">
         {/* Preview */}
@@ -960,125 +902,82 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         {/* Controls */}
         <div className="w-80 flex flex-col gap-4 overflow-y-auto overflow-x-visible flex-shrink-0 pt-6 pb-6 px-1">
           {/* AI Tools */}
-          {(!expandedCard || expandedCard === 'ai-tools') && (
+          <CollapsibleSection
+            id="ai-tools"
+            title="AI Tools"
+            icon={Sparkles}
+            isExpanded={expandedCard === 'ai-tools'}
+            onToggle={toggleCard}
+          >
             <div>
-              <button
-                onClick={() => toggleCard('ai-tools')}
-                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" />
-                  AI Tools
+              {modelAvailable === false && (
+                <div className="mb-3 p-3 bg-yellow-500/20 rounded-xl border border-yellow-500/30">
+                  <p className="text-yellow-200 text-xs mb-2">AI model not installed</p>
+                  <ActionButton
+                    onClick={handleDownloadModel}
+                    disabled={downloadingModel}
+                    className="w-full px-4 py-2 rounded-xl text-xs bg-blue-500/30"
+                  >
+                    {downloadingModel ? 'Downloading...' : 'Download AI Model'}
+                  </ActionButton>
                 </div>
-                <ChevronDown
-                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                    expandedCard === 'ai-tools' ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-            {expandedCard === 'ai-tools' && (
-              <div className="mt-4">
-                {modelAvailable === false && (
-                  <div className="mb-3 p-3 bg-yellow-500/20 rounded-xl border border-yellow-500/30">
-                    <p className="text-yellow-200 text-xs mb-2">
-                      AI model not installed
-                    </p>
-                    <button
-                      onClick={handleDownloadModel}
-                      disabled={downloadingModel}
-                      className="w-full glass-card px-4 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50 bg-blue-500/30"
-                    >
-                      {downloadingModel ? 'Downloading...' : 'Download AI Model'}
-                    </button>
-                  </div>
-                )}
-
-                <button
-                  onClick={handleRemoveBackground}
-                  disabled={processing || modelAvailable === false || downloadingModel}
-                  className="w-full glass-card px-4 py-3 rounded-2xl text-white text-sm transition-all duration-300 disabled:opacity-50"
-                >
-                  Remove Background
-                </button>
-              </div>
-            )}
+              )}
+              <ActionButton
+                onClick={handleRemoveBackground}
+                disabled={processing || modelAvailable === false || downloadingModel}
+                className="w-full"
+              >
+                Remove Background
+              </ActionButton>
             </div>
-          )}
+          </CollapsibleSection>
 
           {/* Transform */}
-          {(!expandedCard || expandedCard === 'transform') && (
-            <div>
-              <button
-                onClick={() => toggleCard('transform')}
-                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <RotateCw className="w-4 h-4" />
-                  Transform
-                </div>
-                <ChevronDown
-                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                    expandedCard === 'transform' ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-            {expandedCard === 'transform' && (
-              <div className="mt-4">
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <button
-                    onClick={() => handleRotate(90)}
-                    disabled={processing}
-                    className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
-                  >
-                    90°
-                  </button>
-                  <button
-                    onClick={() => handleRotate(180)}
-                    disabled={processing}
-                    className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
-                  >
-                    180°
-                  </button>
-                  <button
-                    onClick={() => handleRotate(270)}
-                    disabled={processing}
-                    className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
-                  >
-                    270°
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <button
-                    onClick={() => handleFlip('horizontal')}
-                    disabled={processing}
-                    className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <FlipHorizontal className="w-3 h-3" />
-                    Flip H
-                  </button>
-                  <button
-                    onClick={() => handleFlip('vertical')}
-                    disabled={processing}
-                    className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <FlipVertical className="w-3 h-3" />
-                    Flip V
-                  </button>
-                </div>
-                <button
-                  onClick={initializeCrop}
-                  disabled={processing || isCropping}
-                  className="w-full glass-card px-4 py-3 rounded-2xl text-white text-sm transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  <Scissors className="w-4 h-4" />
-                  Crop Image
-                </button>
-              </div>
-            )}
+          <CollapsibleSection
+            id="transform"
+            title="Transform"
+            icon={RotateCw}
+            isExpanded={expandedCard === 'transform'}
+            onToggle={toggleCard}
+          >
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <ActionButton onClick={() => handleRotate(90)} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
+                90°
+              </ActionButton>
+              <ActionButton onClick={() => handleRotate(180)} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
+                180°
+              </ActionButton>
+              <ActionButton onClick={() => handleRotate(270)} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
+                270°
+              </ActionButton>
             </div>
-          )}
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <ActionButton
+                onClick={() => handleFlip('horizontal')}
+                disabled={processing}
+                className="px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2"
+              >
+                <FlipHorizontal className="w-3 h-3" />
+                Flip H
+              </ActionButton>
+              <ActionButton
+                onClick={() => handleFlip('vertical')}
+                disabled={processing}
+                className="px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2"
+              >
+                <FlipVertical className="w-3 h-3" />
+                Flip V
+              </ActionButton>
+            </div>
+            <ActionButton
+              onClick={initializeCrop}
+              disabled={processing || isCropping}
+              className="w-full flex items-center justify-center gap-2"
+            >
+              <Scissors className="w-4 h-4" />
+              Crop Image
+            </ActionButton>
+          </CollapsibleSection>
 
           {/* Convert */}
           {(!expandedCard || expandedCard === 'convert') && (
@@ -1211,74 +1110,60 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
           )}
 
           {/* Metadata */}
-          {(!expandedCard || expandedCard === 'privacy-metadata') && (
-            <div>
-              <button
-                onClick={() => toggleCard('privacy-metadata')}
-                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Trash2 className="w-4 h-4" />
-                  Metadata
-                </div>
-                <ChevronDown
-                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                    expandedCard === 'privacy-metadata' ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-            {expandedCard === 'privacy-metadata' && (
-              <div className="mt-4 space-y-3">
-                {metadata && (
-                  <>
-                    <div className="space-y-1 text-xs">
-                      {getBasicMetadataEntries().map((entry: { key: string; value: string }, idx: number) => (
-                        <div key={idx} className="flex justify-between">
-                          <span className="text-white/60">{entry.key}:</span>
-                          <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
-                            {entry.value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    {hasExtendedMetadata() && (
-                      <button
-                        onClick={handleOpenMetadataDetail}
-                        className="w-full glass-card px-3 py-2 rounded-xl text-white/80 text-xs transition-all duration-300 hover:text-white hover:scale-105 flex items-center justify-center gap-2"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        View Extended Metadata
-                      </button>
-                    )}
-                    <button
-                      onClick={handleStripMetadata}
-                      disabled={processing}
-                      className="w-full glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
+          <CollapsibleSection
+            id="privacy-metadata"
+            title="Metadata"
+            icon={Trash2}
+            isExpanded={expandedCard === 'privacy-metadata'}
+            onToggle={toggleCard}
+          >
+            <div className="space-y-3">
+              {metadata && (
+                <>
+                  <div className="space-y-1 text-xs">
+                    {getBasicMetadataEntries().map((entry, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span className="text-white/60">{entry.key}:</span>
+                        <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
+                          {entry.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {hasExtendedMetadata() && (
+                    <ActionButton
+                      onClick={() => setShowMetadataDetail(true)}
+                      className="w-full px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2 text-white/80 hover:text-white"
                     >
-                      Strip Metadata
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+                      <ExternalLink className="w-3 h-3" />
+                      View Extended Metadata
+                    </ActionButton>
+                  )}
+                  <ActionButton
+                    onClick={handleStripMetadata}
+                    disabled={processing}
+                    className="w-full px-3 py-2 rounded-xl text-xs"
+                  >
+                    Strip Metadata
+                  </ActionButton>
+                </>
+              )}
             </div>
-          )}
+          </CollapsibleSection>
 
-          {/* Toast Notification */}
-          {toast && (
-            <div 
-              className="fixed bottom-6 left-6 z-50 transition-all duration-300 animate-in fade-in slide-in-from-bottom-2"
-              key={toast.id}
-            >
-              <div className="glass-card rounded-xl px-4 py-2 shadow-lg">
-                <p className="text-white text-sm whitespace-nowrap">{toast.message}</p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
+      {/* Metadata Detail Modal */}
+      <MetadataDetailModal
+        isOpen={showMetadataDetail}
+        onClose={() => setShowMetadataDetail(false)}
+        entries={getAllMetadataEntries()}
+        title={`Metadata - ${displayFileName}`}
+      />
+
+      {/* Toast Notification */}
+      {toast && <Toast message={toast.message} id={toast.id} />}
     </div>
   );
 }

@@ -14,6 +14,9 @@ import { MetadataSection } from './shared/MetadataSection';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { MergePdfView } from './merge/MergePdfView';
 import { formatFileSize } from '../utils/fileUtils';
+import { useToast } from '../hooks/useToast';
+import { useProcessing } from '../hooks/useProcessing';
+import { loadPdfAsBlobUrl } from '../utils/fileLoaders';
 
 
 interface PdfProcessorProps {
@@ -81,9 +84,6 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
   }
 
   // Existing single-PDF functionality continues below
-  const [processing, setProcessing] = useState(false);
-  const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [extractedText, setExtractedText] = useState<string>('');
   const [additionalPdfs, setAdditionalPdfs] = useState<string[]>([]);
   const [metadata, setMetadata] = useState<PdfMetadata | null>(null);
@@ -125,18 +125,8 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
   const [draggedSignatureId, setDraggedSignatureId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  const showToast = (message: string) => {
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
-    }
-    
-    const id = Date.now();
-    setToast({ message, id });
-    
-    toastTimeoutRef.current = setTimeout(() => {
-      setToast(null);
-    }, 3000);
-  };
+  const { toast, showToast } = useToast();
+  const { processing, setProcessing, withProcessing } = useProcessing();
 
   // Set up PDF.js worker
   useEffect(() => {
@@ -169,14 +159,13 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
       setPdfLoading(true);
       setPdfError(false);
       try {
-        const fileData = await readBinaryFile(file.path);
-        const blob = new Blob([fileData as BlobPart], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
+        const url = await loadPdfAsBlobUrl(file.path);
         setPdfData(url);
         
         // Try to load PDF with pdf-lib for annotation support (non-blocking)
         // Some encrypted or corrupted PDFs may not load with pdf-lib
         try {
+          const fileData = await readBinaryFile(file.path);
           const arrayBuffer = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
           const pdfDoc = await PDFDocument.load(arrayBuffer as ArrayBuffer, { ignoreEncryption: true });
           pdfDocRef.current = pdfDoc;

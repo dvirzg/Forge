@@ -1,24 +1,20 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { save } from '@tauri-apps/api/dialog';
-import { Scissors, Volume2, Maximize2, FileImage, Trash2, ExternalLink } from 'lucide-react';
+import { FileImage } from 'lucide-react';
 import { Header } from './shared/Header';
-import { CollapsibleSection } from './shared/CollapsibleSection';
-import { ActionButton } from './shared/ActionButton';
 import { MetadataDetailModal } from './shared/MetadataDetailModal';
 import { Toast } from './shared/Toast';
+import { ProcessorLayout } from './shared/ProcessorLayout';
+import { VideoTools } from './video/VideoTools';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useMetadata } from '../hooks/useMetadata';
 import { formatFileSize } from '../utils/fileUtils';
-import { ProcessorLayout } from './shared/ProcessorLayout';
+import { changeFileExtension } from '../utils/pathUtils';
+import { BaseProcessorProps } from '../types/processor';
 
-interface VideoProcessorProps {
-  file: {
-    path: string;
-    name: string;
-  };
-  onReset: () => void;
-}
+interface VideoProcessorProps extends BaseProcessorProps {}
 
 interface VideoMetadata {
   file_size: number;
@@ -59,7 +55,7 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
       async () => {
         showToast('Trimming video...');
         const outputPath = await save({
-          defaultPath: file.name.replace(/\.[^/.]+$/, '_trimmed.mp4'),
+          defaultPath: changeFileExtension(file.name, 'mp4').replace('.mp4', '_trimmed.mp4'),
           filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }],
         });
 
@@ -86,7 +82,7 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
       async () => {
         showToast('Removing audio...');
         const outputPath = await save({
-          defaultPath: file.name.replace(/\.[^/.]+$/, '_no_audio.mp4'),
+          defaultPath: changeFileExtension(file.name, 'mp4').replace('.mp4', '_no_audio.mp4'),
           filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }],
         });
 
@@ -111,7 +107,7 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
       async () => {
         showToast(`Scaling to ${width}x${height}...`);
         const outputPath = await save({
-          defaultPath: file.name.replace(/\.[^/.]+$/, `_${width}x${height}.mp4`),
+          defaultPath: changeFileExtension(file.name, 'mp4').replace('.mp4', `_${width}x${height}.mp4`),
           filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi'] }],
         });
 
@@ -138,7 +134,7 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
       async () => {
         showToast('Converting to GIF...');
         const outputPath = await save({
-          defaultPath: file.name.replace(/\.[^/.]+$/, '.gif'),
+          defaultPath: changeFileExtension(file.name, 'gif'),
           filters: [{ name: 'GIF', extensions: ['gif'] }],
         });
 
@@ -164,33 +160,19 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
     setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
-  const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries: Array<{ key: string; value: string }> = [];
-    entries.push({ key: 'File Size', value: formatFileSize(metadata.file_size) });
-    if (metadata.file_created) entries.push({ key: 'File Created', value: metadata.file_created });
-    if (metadata.file_modified) entries.push({ key: 'File Modified', value: metadata.file_modified });
-    
-    return entries;
-  };
-
-  const getAllMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries = getBasicMetadataEntries();
-    // Dynamically include all video metadata from FFprobe
-    Object.entries(metadata.all_metadata).forEach(([key, value]) => {
-      entries.push({ key, value });
-    });
-    
-    return entries;
-  };
-
-  const hasExtendedMetadata = (): boolean => {
-    if (!metadata) return false;
-    return Object.keys(metadata.all_metadata).length > 0;
-  };
+  const { getBasicMetadataEntries, getAllMetadataEntries, hasExtendedMetadata } = useMetadata({
+    metadata,
+    getBasicEntries: (meta) => {
+      const entries = [];
+      entries.push({ key: 'File Size', value: formatFileSize(meta.file_size) });
+      if (meta.file_created) entries.push({ key: 'File Created', value: meta.file_created });
+      if (meta.file_modified) entries.push({ key: 'File Modified', value: meta.file_modified });
+      return entries;
+    },
+    getExtendedEntries: (meta) => {
+      return Object.entries(meta.all_metadata).map(([key, value]) => ({ key, value }));
+    },
+  });
 
   return (
     <div className="h-full flex flex-col">
@@ -212,189 +194,32 @@ function VideoProcessor({ file, onReset }: VideoProcessorProps) {
           </div>
         }
         sidebar={
-          <>
-            {/* Trim */}
-            <CollapsibleSection
-              id="trim"
-              title="Trim Video"
-              icon={Scissors}
-              isExpanded={expandedCard === 'trim'}
-              onToggle={toggleCard}
-            >
-              <div className="space-y-3">
-                <div>
-                  <label className="text-white/60 text-sm mb-1 block">Start Time (HH:MM:SS)</label>
-                  <input
-                    type="text"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                    placeholder="00:00:00"
-                  />
-                </div>
-                <div>
-                  <label className="text-white/60 text-sm mb-1 block">End Time (HH:MM:SS)</label>
-                  <input
-                    type="text"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                    placeholder="00:00:10"
-                  />
-                </div>
-                <ActionButton onClick={handleTrim} disabled={processing} className="w-full">
-                  Trim
-                </ActionButton>
-              </div>
-            </CollapsibleSection>
-
-            {/* Audio */}
-            <CollapsibleSection
-              id="audio"
-              title="Audio"
-              icon={Volume2}
-              isExpanded={expandedCard === 'audio'}
-              onToggle={toggleCard}
-            >
-              <ActionButton onClick={handleStripAudio} disabled={processing} className="w-full">
-                Remove Audio
-              </ActionButton>
-            </CollapsibleSection>
-
-            {/* Scale */}
-            <CollapsibleSection
-              id="scale"
-              title="Scale Resolution"
-              icon={Maximize2}
-              isExpanded={expandedCard === 'scale'}
-              onToggle={toggleCard}
-            >
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-white/60 text-sm mb-1 block">Width</label>
-                    <input
-                      type="number"
-                      value={width}
-                      onChange={(e) => setWidth(parseInt(e.target.value))}
-                      className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-white/60 text-sm mb-1 block">Height</label>
-                    <input
-                      type="number"
-                      value={height}
-                      onChange={(e) => setHeight(parseInt(e.target.value))}
-                      className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <ActionButton
-                    onClick={() => {
-                      setWidth(1920);
-                      setHeight(1080);
-                    }}
-                    className="px-3 py-2 rounded-xl text-xs"
-                  >
-                    1080p
-                  </ActionButton>
-                  <ActionButton
-                    onClick={() => {
-                      setWidth(1280);
-                      setHeight(720);
-                    }}
-                    className="px-3 py-2 rounded-xl text-xs"
-                  >
-                    720p
-                  </ActionButton>
-                  <ActionButton
-                    onClick={() => {
-                      setWidth(854);
-                      setHeight(480);
-                    }}
-                    className="px-3 py-2 rounded-xl text-xs"
-                  >
-                    480p
-                  </ActionButton>
-                </div>
-                <ActionButton onClick={handleScale} disabled={processing} className="w-full">
-                  Scale
-                </ActionButton>
-              </div>
-            </CollapsibleSection>
-
-            {/* GIF Conversion */}
-            <CollapsibleSection
-              id="gif"
-              title="Convert to GIF"
-              icon={FileImage}
-              isExpanded={expandedCard === 'gif'}
-              onToggle={toggleCard}
-            >
-              <div className="space-y-3">
-                <div>
-                  <label className="text-white/60 text-sm mb-1 block">FPS</label>
-                  <input
-                    type="number"
-                    value={fps}
-                    onChange={(e) => setFps(parseInt(e.target.value))}
-                    className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                    min="1"
-                    max="30"
-                  />
-                </div>
-                <div>
-                  <label className="text-white/60 text-sm mb-1 block">Width</label>
-                  <input
-                    type="number"
-                    value={gifWidth}
-                    onChange={(e) => setGifWidth(parseInt(e.target.value))}
-                    className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                  />
-                </div>
-                <ActionButton onClick={handleVideoToGif} disabled={processing} className="w-full">
-                  Convert to GIF
-                </ActionButton>
-              </div>
-            </CollapsibleSection>
-
-            {/* Metadata */}
-            <CollapsibleSection
-              id="metadata"
-              title="Metadata"
-              icon={Trash2}
-              isExpanded={expandedCard === 'metadata'}
-              onToggle={toggleCard}
-            >
-              <div className="space-y-3">
-                {metadata && (
-                  <>
-                    <div className="space-y-1 text-xs">
-                      {getBasicMetadataEntries().map((entry, idx) => (
-                        <div key={idx} className="flex justify-between">
-                          <span className="text-white/60">{entry.key}:</span>
-                          <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
-                            {entry.value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    {hasExtendedMetadata() && (
-                      <ActionButton
-                        onClick={() => setShowMetadataDetail(true)}
-                        className="w-full px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2 text-white/80 hover:text-white"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        View All {getAllMetadataEntries().length} Properties
-                      </ActionButton>
-                    )}
-                  </>
-                )}
-              </div>
-            </CollapsibleSection>
-          </>
+          <VideoTools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            processing={processing}
+            startTime={startTime}
+            endTime={endTime}
+            width={width}
+            height={height}
+            fps={fps}
+            gifWidth={gifWidth}
+            onStartTimeChange={setStartTime}
+            onEndTimeChange={setEndTime}
+            onWidthChange={setWidth}
+            onHeightChange={setHeight}
+            onFpsChange={setFps}
+            onGifWidthChange={setGifWidth}
+            onTrim={handleTrim}
+            onStripAudio={handleStripAudio}
+            onScale={handleScale}
+            onVideoToGif={handleVideoToGif}
+            metadata={metadata}
+            fileName={file.name}
+            getBasicMetadataEntries={getBasicMetadataEntries}
+            getAllMetadataEntries={getAllMetadataEntries}
+            hasExtendedMetadata={hasExtendedMetadata}
+          />
         }
       />
 

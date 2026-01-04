@@ -5,134 +5,165 @@
 
 ## Executive Summary
 
-This is a well-functioning Tauri application for file processing (images, PDFs, videos, text). The codebase demonstrates solid React/TypeScript skills and functional implementation. However, there are significant opportunities for improvement in code organization, DRY principles, and modularity that would make this production-ready and maintainable at scale.
+This is a well-functioning Tauri application for file processing (images, PDFs, videos, text). The codebase demonstrates solid React/TypeScript skills and functional implementation. **Significant refactoring has been done** since the initial review - components have been decomposed, shared hooks and utilities created. However, there are still opportunities for improvement in consistency, DRY principles, and modularity that would make this production-ready and maintainable at scale.
 
-**Overall Assessment**: Good functional code with room for architectural improvements.
+**Overall Assessment**: Good functional code with solid refactoring progress, but needs consistency improvements.
+
+---
+
+## ✅ What's Been Done Well (Recent Improvements)
+
+1. **Component Decomposition**: 
+   - ✅ `PdfProcessor` broken into `PdfViewer`, `PdfToolbar`, `PdfTools`, `PdfNavigation`, `SignatureModal`
+   - ✅ `ImageProcessor` broken into `ImagePreview`, `ImageAITools`, `ImageTransformTools`, `ImageConvertTools`, `ImageCompressTools`
+   - ✅ Component sizes are now more manageable
+
+2. **Shared Infrastructure**:
+   - ✅ `useToast` hook exists and is being used consistently
+   - ✅ `useProcessing` hook exists and is being used consistently
+   - ✅ `fileLoaders.ts` utilities exist
+   - ✅ `pathUtils.ts` utilities exist
+   - ✅ `ProcessorLayout` component exists
+   - ✅ `MetadataSection` component exists
+   - ✅ `useMetadata` hook exists
+   - ✅ `MetadataDetailModal` exists
+
+3. **Type Safety**: Good TypeScript usage throughout
 
 ---
 
 ## 🔴 Critical Issues
 
-### 1. Massive Component Files
-- **`PdfProcessor.tsx`**: 1,546 lines - This is a code smell indicating the component needs decomposition
-- **`ImageProcessor.tsx`**: 1,287 lines - Also too large
-- **Impact**: Hard to maintain, test, and reason about
+### 1. Metadata Hook Not Being Used
+**Location**: All processors (`PdfProcessor`, `ImageProcessor`, `VideoProcessor`, `TextProcessor`)
 
-### 2. Toast Notification Duplication
-**Location**: `PdfProcessor.tsx`, `ImageProcessor.tsx`, `MergePdfView.tsx`
+**Problem**: The `useMetadata` hook exists in `src/hooks/useMetadata.ts` but **none of the processors are using it**. Each processor still implements `getBasicMetadataEntries()`, `getAllMetadataEntries()`, and `hasExtendedMetadata()` manually.
 
-**Problem**: Three different implementations of the same toast logic:
+**Current State**:
+- `PdfProcessor.tsx` lines 352-380: Manual implementation
+- `ImageProcessor.tsx` lines 508-541: Manual implementation  
+- `VideoProcessor.tsx` lines 167-193: Manual implementation
+- `TextProcessor.tsx` lines 113-131: Manual implementation
+
+**Solution**: Migrate all processors to use the `useMetadata` hook:
+
 ```typescript
-// Duplicated in 3+ files
-const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
-const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-const showToast = (message: string) => { /* ... */ };
+// Example for ImageProcessor
+const { getBasicMetadataEntries, getAllMetadataEntries, hasExtendedMetadata } = useMetadata({
+  metadata,
+  getBasicEntries: (meta) => [
+    { key: 'Width', value: `${meta.width}px` },
+    { key: 'Height', value: `${meta.height}px` },
+    // ... rest
+  ],
+  getExtendedEntries: (meta) => [
+    ...Object.entries(meta.exif).map(([k, v]) => ({ key: `EXIF: ${k}`, value: v })),
+    // ... rest
+  ],
+});
 ```
 
-**Solution**: There's already a `useToast` hook in `src/hooks/useToast.ts` that's **not being used**. All processors should use this hook.
-
-**Files Affected**:
-- `src/components/PdfProcessor.tsx` (lines 85-139)
-- `src/components/ImageProcessor.tsx` (lines 56-74)
-- `src/components/merge/MergePdfView.tsx` (lines 23-41)
+**Impact**: Removes ~100+ lines of duplicated code across 4 files.
 
 ---
 
 ## 🟡 Major Issues
 
-### 3. Inconsistent Header Usage
-**Problem**: The shared `Header` component exists but is only used in `PdfProcessor`. Other processors have custom header implementations.
+### 2. Inconsistent Use of Shared Components
+
+#### 2a. ProcessorLayout Not Used Consistently
+**Problem**: `ProcessorLayout` component exists but only `VideoProcessor` uses it.
 
 **Current State**:
-- ✅ `PdfProcessor.tsx` - Uses `<Header>` component
-- ❌ `ImageProcessor.tsx` - Custom header (lines 784-855)
-- ❌ `VideoProcessor.tsx` - Custom header (lines 196-207)
-- ❌ `TextProcessor.tsx` - Custom header (lines 128-139)
+- ✅ `VideoProcessor.tsx` - Uses `ProcessorLayout` (line 203)
+- ❌ `PdfProcessor.tsx` - Custom flex layout (lines 876-956)
+- ❌ `ImageProcessor.tsx` - Custom flex layout (lines 593-709)
+- ❌ `TextProcessor.tsx` - Custom grid layout (lines 141-288)
 
-**Impact**: UI inconsistency, maintenance burden, code duplication
+**Impact**: Adding new processors requires reimplementing layout logic, inconsistent UX
 
-**Recommendation**: Standardize all processors to use the shared `Header` component. The Header already supports renaming functionality that ImageProcessor needs.
-
-### 4. Metadata Display Duplication
-**Problem**: Each processor has similar but slightly different metadata display logic:
-
-**Duplicated Patterns**:
-- `getBasicMetadataEntries()` - Implemented in PdfProcessor, ImageProcessor, VideoProcessor, TextProcessor
-- `getAllMetadataEntries()` - Similar pattern across all
-- `hasExtendedMetadata()` - Duplicated logic
-- Metadata detail modal - Identical implementation in VideoProcessor and TextProcessor
-
-**Current Implementation**:
+**Solution**: Migrate all processors to use `ProcessorLayout`:
 ```typescript
-// PdfProcessor.tsx (lines 393-421)
-const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => { /* ... */ }
-const getAllMetadataEntries = (): Array<{ key: string; value: string }> => { /* ... */ }
-const hasExtendedMetadata = (): boolean => { /* ... */ }
+// PdfProcessor should use:
+<ProcessorLayout
+  layout="flex"
+  preview={<PdfViewer ... />}
+  sidebar={<PdfTools ... />}
+/>
 
-// ImageProcessor.tsx (lines 731-764) - Same pattern
-// VideoProcessor.tsx (lines 170-184) - Similar pattern
-// TextProcessor.tsx (lines 102-116) - Similar pattern
+// ImageProcessor should use:
+<ProcessorLayout
+  layout="flex"
+  preview={<ImagePreview ... />}
+  sidebar={...}
+/>
+
+// TextProcessor should use:
+<ProcessorLayout
+  layout="grid-3"
+  preview={...}
+  sidebar={...}
+/>
 ```
 
-**Solution**: Create a generic metadata utility or hook:
+#### 2b. MetadataSection Not Used Consistently
+**Problem**: `MetadataSection` component exists but only `PdfTools` uses it.
+
+**Current State**:
+- ✅ `PdfTools.tsx` - Uses `MetadataSection` (line 159)
+- ❌ `ImageProcessor.tsx` - Custom metadata display (lines 668-707)
+- ❌ `VideoProcessor.tsx` - Custom metadata display (lines 364-396)
+- ❌ `TextProcessor.tsx` - Custom metadata display (lines 254-286)
+
+**Impact**: Inconsistent metadata UI, duplicated rendering logic
+
+**Solution**: Migrate all processors to use `MetadataSection`:
 ```typescript
-// src/hooks/useMetadata.ts
-export function useMetadata<T extends { file_size: number }>(
-  metadata: T | null,
-  formatter: (meta: T) => Array<{ key: string; value: string }>
-) {
-  const getBasicEntries = useCallback(() => {
-    if (!metadata) return [];
-    return formatter(metadata);
-  }, [metadata, formatter]);
-  
-  // ... rest of logic
+<MetadataSection
+  sectionId="metadata"
+  isExpanded={expandedCard === 'metadata'}
+  onToggle={toggleCard}
+  metadata={metadata ? getBasicMetadataEntries() : null}
+  displayFileName={file.name}
+  getBasicEntries={getBasicMetadataEntries}
+  getAllEntries={getAllMetadataEntries}
+  hasExtendedMetadata={hasExtendedMetadata}
+  onStripMetadata={handleStripMetadata} // if applicable
+  processing={processing}
+/>
+```
+
+### 3. Inconsistent Metadata Modal Usage
+**Problem**: `MetadataDetailModal` exists but processors use it inconsistently.
+
+**Current State**:
+- ✅ `ImageProcessor.tsx` - Uses `MetadataDetailModal` (line 712)
+- ✅ `VideoProcessor.tsx` - Uses `MetadataDetailModal` (line 402)
+- ✅ `TextProcessor.tsx` - Uses `MetadataDetailModal` (line 291)
+- ❌ `PdfProcessor.tsx` - Uses `MetadataSection` which opens a separate window (different pattern)
+
+**Impact**: Inconsistent UX - some use modals, PDF uses separate window
+
+**Recommendation**: Standardize on `MetadataDetailModal` for all processors, or document why PDF uses a separate window.
+
+### 4. Missing Base Processor Interface Implementation
+**Problem**: `BaseProcessorProps` type exists in `src/types/processor.ts` but processors don't consistently use it.
+
+**Current State**:
+- All processors define their own props interfaces that match `BaseProcessorProps` but don't extend it
+
+**Solution**: Make processors extend the base interface:
+```typescript
+// Instead of:
+interface PdfProcessorProps {
+  file: { path: string; name: string };
+  onReset: () => void;
+  multiplePdfs?: Array<{ path: string; name: string }>;
 }
-```
 
-### 5. Metadata Modal Duplication
-**Location**: `VideoProcessor.tsx` (lines 444-472), `TextProcessor.tsx` (lines 345-373)
-
-**Problem**: Identical modal implementation for displaying metadata details.
-
-**Solution**: Extract to `src/components/shared/MetadataDetailModal.tsx`
-
-### 6. Inconsistent Collapsible Section Pattern
-**Problem**: Mixed usage of `CollapsibleSection` component vs custom implementations.
-
-**Current State**:
-- ✅ `PdfProcessor.tsx` - Uses `CollapsibleSection` consistently
-- ❌ `ImageProcessor.tsx` - Custom collapsible implementation (lines 963-1007, 1010-1081, etc.)
-- ❌ `VideoProcessor.tsx` - Custom collapsible (lines 384-432)
-- ❌ `TextProcessor.tsx` - Custom collapsible (lines 284-333)
-
-**Impact**: UI inconsistency, harder to maintain consistent behavior
-
-### 7. Processing State Management
-**Problem**: Each processor manages `processing` state independently with similar patterns.
-
-**Recommendation**: Create a shared hook or context for processing state:
-```typescript
-// src/hooks/useProcessing.ts
-export function useProcessing() {
-  const [processing, setProcessing] = useState(false);
-  
-  const withProcessing = async <T,>(
-    fn: () => Promise<T>,
-    onError?: (error: unknown) => void
-  ): Promise<T | null> => {
-    setProcessing(true);
-    try {
-      return await fn();
-    } catch (error) {
-      onError?.(error);
-      return null;
-    } finally {
-      setProcessing(false);
-    }
-  };
-  
-  return { processing, setProcessing, withProcessing };
+// Use:
+interface PdfProcessorProps extends BaseProcessorProps {
+  multiplePdfs?: Array<{ path: string; name: string }>;
 }
 ```
 
@@ -140,183 +171,210 @@ export function useProcessing() {
 
 ## 🟢 Easy Wins (Quick Improvements)
 
-### 8. Missing Import in TextProcessor
-**Location**: `TextProcessor.tsx` line 106
+### 5. Path Utilities Not Fully Utilized
+**Location**: Throughout codebase
 
-**Problem**: Uses `formatFileSize` but doesn't import it.
+**Problem**: `pathUtils.ts` exists but processors still use manual path parsing in places.
 
-**Fix**: Add `import { formatFileSize } from '../utils/fileUtils';`
+**Examples**:
+- `ImageProcessor.tsx` line 169: `file.name.replace(/\.[^/.]+$/, '_no_bg.png')` → Should use `changeFileExtension()`
+- `VideoProcessor.tsx` line 62: `file.name.replace(/\.[^/.]+$/, '_trimmed.mp4')` → Should use `changeFileExtension()`
+- `App.tsx` line 69: `path.split('/').pop() || ''` → Should use `getFileName()`
 
-### 9. Inconsistent Error Handling
-**Pattern**: Some functions use `showToast` for errors, others use `setStatus`, some use `console.error` only.
+**Solution**: Replace all manual path parsing with utility functions.
 
-**Recommendation**: Standardize on `showToast` for user-facing errors and `console.error` for debugging.
+### 6. Inconsistent Error Handling Patterns
+**Problem**: Mixed patterns for error handling:
+- Some use `showToast` in `withProcessing` error callback
+- Some use `console.error` only
+- Some use both
 
-### 10. File Loading Pattern Duplication
-**Problem**: Each processor loads files differently:
-- `ImageProcessor`: Uses `readBinaryFile` + `FileReader` (lines 101-143)
-- `PdfProcessor`: Uses `readBinaryFile` + `Blob` + `URL.createObjectURL` (lines 167-219)
-- `TextProcessor`: Uses `readTextFile` (lines 52-60)
-
-**Recommendation**: Create utility functions:
+**Recommendation**: Standardize on:
 ```typescript
-// src/utils/fileLoaders.ts
-export async function loadImageAsDataUrl(path: string): Promise<string> { /* ... */ }
-export async function loadPdfAsBlobUrl(path: string): Promise<string> { /* ... */ }
-export async function loadTextFile(path: string): Promise<string> { /* ... */ }
+await withProcessing(
+  async () => { /* ... */ },
+  (error) => {
+    console.error('Operation failed:', error);
+    showToast(`Error: ${error}`);
+  }
+);
 ```
 
-### 11. Status vs Toast Inconsistency
-**Problem**: `VideoProcessor` and `TextProcessor` use `status` state for messages, while others use `toast`.
+### 7. Magic Numbers Still Present
+**Location**: Throughout codebase
 
-**Recommendation**: Standardize on toast notifications for consistency.
+**Examples**:
+- `PdfProcessor.tsx` line 425: `padding = 20` → Should be `const PREVIEW_PADDING = 20`
+- `PdfProcessor.tsx` line 431: `scale = Math.min(scaleX, scaleY, 1.5)` → `1.5` should be `MAX_PDF_SCALE`
+- `ImageProcessor.tsx` line 552: `sigWidth = 100` → Should be `const SIGNATURE_WIDTH = 100`
+
+**Solution**: Extract magic numbers to constants at file/module level.
+
+### 8. ProcessorLayout Width Inconsistency
+**Problem**: `ProcessorLayout` has hardcoded sidebar width (`w-72`) in flex layout, but processors using custom layouts have different widths:
+- `PdfProcessor`: `w-72` (matches)
+- `ImageProcessor`: `w-80` (doesn't match)
+
+**Solution**: Make sidebar width configurable in `ProcessorLayout` or standardize on one width.
 
 ---
 
 ## 🏗️ Architecture & Modularity Issues
 
-### 12. No Consistent Preview Sidebar Pattern
-**Problem**: Each processor implements its own layout for the preview + sidebar pattern:
-- `PdfProcessor`: Flex layout with preview left, tools right (lines 1088-1434)
-- `ImageProcessor`: Flex layout with preview left, controls right (lines 857-1280)
-- `VideoProcessor`: Grid layout 2 columns (lines 209-441)
-- `TextProcessor`: Grid layout 3 columns (lines 141-342)
+### 9. No Consistent Preview Sidebar Card Pattern
+**Problem**: While `CollapsibleSection` is used consistently, there's no standardized pattern for the "preview sidebar card" that shows file info/metadata in a consistent way across processors.
 
-**Impact**: Adding new processors requires reimplementing layout, inconsistent UX
+**Current State**:
+- Each processor implements preview + sidebar differently
+- No shared abstraction for "processor card" that could be reused
 
-**Solution**: Create a shared layout component:
+**Recommendation**: Create a `ProcessorCard` component that standardizes:
+- File preview area
+- Tool sections (using `CollapsibleSection`)
+- Metadata section (using `MetadataSection`)
+- Consistent spacing and layout
+
+**Example**:
 ```typescript
-// src/components/shared/ProcessorLayout.tsx
-interface ProcessorLayoutProps {
+// src/components/shared/ProcessorCard.tsx
+interface ProcessorCardProps {
   preview: React.ReactNode;
-  sidebar: React.ReactNode;
-  layout?: 'flex' | 'grid-2' | 'grid-3';
-}
-
-export function ProcessorLayout({ preview, sidebar, layout = 'flex' }: ProcessorLayoutProps) {
-  // Consistent layout implementation
-}
-```
-
-### 13. Missing Base Processor Interface
-**Problem**: No common interface or base class for processors, leading to:
-- Inconsistent prop interfaces
-- No shared behavior
-- Hard to add new processors consistently
-
-**Recommendation**: Create a base processor type:
-```typescript
-// src/types/processor.ts
-export interface BaseProcessorProps {
-  file: {
-    path: string;
-    name: string;
+  tools: Array<{
+    id: string;
+    title: string;
+    icon: LucideIcon;
+    content: React.ReactNode;
+  }>;
+  metadata?: {
+    entries: MetadataEntry[];
+    onStrip?: () => void;
   };
-  onReset: () => void;
-}
-
-export interface ProcessorMetadata {
-  file_size: number;
-  file_created?: string;
-  file_modified?: string;
 }
 ```
 
-### 14. Tool Section Inconsistency
-**Problem**: Each processor implements tool sections differently:
-- `PdfProcessor`: Uses `CollapsibleSection` with `ActionButton`
-- `ImageProcessor`: Custom collapsible with inline buttons
-- `VideoProcessor`: Non-collapsible cards
-- `TextProcessor`: Non-collapsible cards
+### 10. Tool Section Organization Inconsistency
+**Problem**: Tool sections are organized differently across processors:
+- `PdfProcessor`: Tools in `PdfTools` component (good separation)
+- `ImageProcessor`: Tools split into separate components (good separation)
+- `VideoProcessor`: Tools inline in main component (could be extracted)
+- `TextProcessor`: Tools inline in main component (could be extracted)
 
-They should all be collapsable. The Image processor and PDF processor are the best UI atm.
+**Recommendation**: Extract tool sections into separate components for `VideoProcessor` and `TextProcessor`:
+- `VideoTools.tsx` - Contains all video tool sections
+- `TextTools.tsx` - Contains all text tool sections
 
-**Recommendation**: Standardize on `CollapsibleSection` + `ActionButton` pattern used in `PdfProcessor`.
+This would make processors more consistent and easier to maintain.
 
-### 15. Window Resizing Logic in App.tsx
-**Location**: `App.tsx` lines 50-118
+### 11. Missing Shared Constants Module
+**Problem**: Magic numbers and repeated strings scattered throughout codebase.
 
-**Problem**: Complex window resizing logic mixed with component logic. Should be extracted to a custom hook or utility.
-
-**Recommendation**:
+**Solution**: Create `src/constants/processor.ts`:
 ```typescript
-// src/hooks/useWindowResize.ts
-export function useWindowResize(fileType: FileType | null) {
-  // Extract window resizing logic
+export const PROCESSOR_CONSTANTS = {
+  SIDEBAR_WIDTH: 288, // w-72 = 18rem = 288px
+  PREVIEW_PADDING: 20,
+  MAX_PDF_SCALE: 1.5,
+  SIGNATURE_WIDTH: 100,
+  SIGNATURE_HEIGHT: 50,
+  TOAST_DURATION: 3000,
+  HIGHLIGHT_OPACITY: 0.4,
+} as const;
+```
+
+### 12. File Type Detection Logic Could Be Centralized
+**Problem**: File type handling is scattered:
+- `App.tsx` has file type detection and routing
+- Each processor handles its own file type
+
+**Recommendation**: Create a processor registry pattern:
+```typescript
+// src/utils/processorRegistry.ts
+export const PROCESSOR_REGISTRY = {
+  image: ImageProcessor,
+  pdf: PdfProcessor,
+  video: VideoProcessor,
+  text: TextProcessor,
+} as const;
+
+export function getProcessor(fileType: FileType) {
+  return PROCESSOR_REGISTRY[fileType];
 }
 ```
 
 ---
 
-## 📦 Component Decomposition Recommendations
+## 📦 Component Organization Recommendations
 
-### PdfProcessor.tsx (1,546 lines) → Break into:
+### Current State Assessment
 
-1. **`PdfViewer.tsx`** - PDF rendering and display (lines 1124-1280)
-2. **`PdfMarkupTools.tsx`** - Highlighting and signature tools (lines 107-127, 582-904)
-3. **`PdfNavigation.tsx`** - Page navigation controls (lines 1397-1433)
-4. **`PdfToolbar.tsx`** - Top toolbar with markup tools (lines 1008-1085)
-5. **`PdfTools.tsx`** - Right sidebar tools (lines 1283-1434)
-6. **`SignatureModal.tsx`** - Signature creation modal (lines 1437-1537)
+| Component | Lines | Status | Recommendation |
+|-----------|-------|--------|----------------|
+| `PdfProcessor.tsx` | 975 | ✅ Good | Already decomposed |
+| `ImageProcessor.tsx` | 726 | ✅ Good | Already decomposed |
+| `VideoProcessor.tsx` | 416 | 🟡 OK | Extract `VideoTools` component |
+| `TextProcessor.tsx` | 305 | 🟡 OK | Extract `TextTools` component |
 
-### ImageProcessor.tsx (1,287 lines) → Break into:
+### Remaining Decomposition Opportunities
 
-1. **`ImagePreview.tsx`** - Image display and cropping (lines 858-958)
-2. **`ImageTransformTools.tsx`** - Rotate, flip, crop controls (lines 1009-1081)
-3. **`ImageConvertTools.tsx`** - Format conversion (lines 1083-1145)
-4. **`ImageCompressTools.tsx`** - Compression controls (lines 1147-1211)
-5. **`ImageAITools.tsx`** - AI features (lines 962-1007)
-
----
-
-## 🎯 Specific Code Smells
-
-### 16. Magic Numbers
-**Location**: Throughout codebase
-
-**Examples**:
-- `3000` (toast timeout) - Should be `TOAST_DURATION` constant
-- `800`, `600` (window sizes) - Should be constants
-- `0.4` (highlight opacity) - Should be `HIGHLIGHT_OPACITY`
-
-### 17. Inline Styles Mixed with Tailwind
-**Problem**: Some components use inline styles (e.g., `PdfProcessor.tsx` lines 1133-1153) while most use Tailwind.
-
-**Recommendation**: Prefer Tailwind classes for consistency.
-
-### 18. Complex Coordinate Conversion Logic
-**Location**: `PdfProcessor.tsx` lines 547-568
-
-**Problem**: `screenToPdfCoords` is complex and tightly coupled. Should be extracted to a utility with tests.
-
-### 19. Duplicate File Path Parsing
-**Problem**: Multiple places parse file paths:
+#### VideoProcessor.tsx → Extract VideoTools
+**Lines 214-397** (tool sections) should be extracted to `VideoTools.tsx`:
 ```typescript
-// Pattern repeated in multiple files
-file.name.replace(/\.[^/.]+$/, '_suffix.ext')
-file.path.split('/').pop()
+// src/components/video/VideoTools.tsx
+export function VideoTools({
+  expandedCard,
+  onToggleCard,
+  processing,
+  // ... all tool props
+}) {
+  return (
+    <>
+      <CollapsibleSection id="trim" ... />
+      <CollapsibleSection id="audio" ... />
+      <CollapsibleSection id="scale" ... />
+      <CollapsibleSection id="gif" ... />
+      <CollapsibleSection id="metadata" ... />
+    </>
+  );
+}
 ```
 
-**Solution**: Create path utilities:
+#### TextProcessor.tsx → Extract TextTools
+**Lines 158-287** (tool sections) should be extracted to `TextTools.tsx`:
 ```typescript
-// src/utils/pathUtils.ts
-export function getFileExtension(path: string): string
-export function changeFileExtension(path: string, newExt: string): string
-export function getFileName(path: string): string
+// src/components/text/TextTools.tsx
+export function TextTools({
+  expandedCard,
+  onToggleCard,
+  processing,
+  // ... all tool props
+}) {
+  return (
+    <>
+      <CollapsibleSection id="case-conversion" ... />
+      <CollapsibleSection id="find-replace" ... />
+      <CollapsibleSection id="quick-actions" ... />
+      <CollapsibleSection id="metadata" ... />
+    </>
+  );
+}
 ```
 
 ---
 
 ## 🔄 DRY Violations Summary
 
-1. ✅ **Toast logic** - 3+ duplications → Use `useToast` hook
-2. ✅ **Metadata display** - 4 duplications → Create metadata hook/utility
-3. ✅ **Metadata modal** - 2 duplications → Extract to shared component
-4. ✅ **Header component** - 3 custom implementations → Use shared `Header`
-5. ✅ **Collapsible sections** - 3 custom implementations → Use `CollapsibleSection`
-6. ✅ **File loading** - Different patterns → Create loader utilities
-7. ✅ **Processing state** - Similar patterns → Create `useProcessing` hook
-8. ✅ **Path parsing** - Multiple places → Create path utilities
+### Still Present:
+1. ❌ **Metadata functions** - 4 duplications → Use `useMetadata` hook
+2. ❌ **Metadata display JSX** - 3 duplications → Use `MetadataSection` component
+3. ❌ **Layout implementation** - 3 duplications → Use `ProcessorLayout` component
+4. ❌ **Path parsing** - Multiple places → Use `pathUtils` functions
+5. ❌ **Magic numbers** - Throughout → Extract to constants
+
+### Already Fixed:
+1. ✅ **Toast logic** - Now using `useToast` hook
+2. ✅ **Processing state** - Now using `useProcessing` hook
+3. ✅ **File loading** - Now using `fileLoaders.ts` utilities
+4. ✅ **Component decomposition** - PdfProcessor and ImageProcessor decomposed
 
 ---
 
@@ -324,68 +382,216 @@ export function getFileName(path: string): string
 
 | Metric | Current | Target | Status |
 |--------|---------|--------|--------|
-| Largest Component | 1,546 lines | < 300 lines | 🔴 |
-| Toast Implementations | 3 | 1 | 🔴 |
-| Header Implementations | 4 | 1 | 🟡 |
-| Metadata Display Patterns | 4 | 1 | 🟡 |
-| Collapsible Implementations | 4 | 1 | 🟡 |
-| Shared Components Used | ~6 | ~15+ | 🟡 |
+| Largest Component | 975 lines | < 500 lines | 🟡 |
+| Metadata Implementations | 4 | 1 (via hook) | 🔴 |
+| Layout Implementations | 4 | 1 (via component) | 🟡 |
+| MetadataSection Usage | 1/4 processors | 4/4 processors | 🟡 |
+| ProcessorLayout Usage | 1/4 processors | 4/4 processors | 🟡 |
+| Shared Components Used | ~10 | ~15+ | 🟡 |
+| Magic Numbers | ~15+ | 0 | 🟡 |
 
 ---
 
 ## 🚀 Recommended Refactoring Priority
 
-### Phase 1: Quick Wins (1-2 days)
-1. Fix missing `formatFileSize` import in `TextProcessor`
-2. Replace all toast implementations with `useToast` hook
-3. Standardize all processors to use shared `Header` component
-4. Extract metadata modal to shared component
+### Phase 1: Consistency Quick Wins (1-2 days)
+1. ✅ Migrate all processors to use `useMetadata` hook
+2. ✅ Migrate all processors to use `MetadataSection` component
+3. ✅ Migrate all processors to use `ProcessorLayout` component
+4. ✅ Replace manual path parsing with `pathUtils` functions
 
-### Phase 2: Standardization (3-5 days)
-5. Standardize all processors to use `CollapsibleSection`
-6. Create `useProcessing` hook and migrate all processors
-7. Create file loader utilities
-8. Create path utilities
+### Phase 2: Component Extraction (2-3 days)
+5. ✅ Extract `VideoTools` component from `VideoProcessor`
+6. ✅ Extract `TextTools` component from `TextProcessor`
+7. ✅ Standardize metadata modal usage (all use `MetadataDetailModal`)
 
-### Phase 3: Component Decomposition (1-2 weeks)
-9. Break down `PdfProcessor` into smaller components
-10. Break down `ImageProcessor` into smaller components
-11. Create `ProcessorLayout` component
-12. Extract coordinate conversion utilities
+### Phase 3: Architecture Improvements (2-3 days)
+8. ✅ Create constants module for magic numbers
+9. ✅ Make processors extend `BaseProcessorProps`
+10. ✅ Create processor registry pattern
+11. ✅ Make `ProcessorLayout` sidebar width configurable
 
-### Phase 4: Architecture (1 week)
-13. Create base processor interface/types
-14. Create metadata hook/utility
-15. Extract window resizing logic to hook
-16. Add comprehensive error handling utilities
+### Phase 4: Polish & Documentation (1-2 days)
+12. ✅ Standardize error handling patterns
+13. ✅ Add JSDoc comments to complex functions
+14. ✅ Document component architecture in README
+
+**Estimated Total Effort**: 1-2 weeks for full refactoring, can be done incrementally.
+
+---
+
+## 🎯 Specific Code Examples
+
+### Example 1: Migrating to useMetadata Hook
+
+**Before** (ImageProcessor.tsx):
+```typescript
+const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => {
+  if (!metadata) return [];
+  const entries: Array<{ key: string; value: string }> = [];
+  entries.push({ key: 'Width', value: `${metadata.width}px` });
+  // ... 10 more lines
+  return entries;
+};
+
+const getAllMetadataEntries = (): Array<{ key: string; value: string }> => {
+  if (!metadata) return [];
+  const entries = getBasicMetadataEntries();
+  Object.entries(metadata.exif).forEach(([key, value]) => 
+    entries.push({ key: `EXIF: ${key}`, value })
+  );
+  // ... more
+  return entries;
+};
+
+const hasExtendedMetadata = (): boolean => {
+  if (!metadata) return false;
+  return Object.keys(metadata.exif).length > 0 || 
+         Object.keys(metadata.iptc).length > 0 || 
+         Object.keys(metadata.xmp).length > 0;
+};
+```
+
+**After**:
+```typescript
+const { getBasicMetadataEntries, getAllMetadataEntries, hasExtendedMetadata } = useMetadata({
+  metadata,
+  getBasicEntries: (meta) => [
+    { key: 'Width', value: `${meta.width}px` },
+    { key: 'Height', value: `${meta.height}px` },
+    { key: 'Format', value: meta.format },
+    { key: 'Color Type', value: meta.color_type },
+    { key: 'File Size', value: formatFileSize(meta.file_size) },
+    // ... rest
+  ],
+  getExtendedEntries: (meta) => [
+    ...Object.entries(meta.exif).map(([k, v]) => ({ key: `EXIF: ${k}`, value: v })),
+    ...Object.entries(meta.iptc).map(([k, v]) => ({ key: `IPTC: ${k}`, value: v })),
+    ...Object.entries(meta.xmp).map(([k, v]) => ({ key: `XMP: ${k}`, value: v })),
+  ],
+});
+```
+
+**Savings**: ~30 lines per processor = ~120 lines total
+
+### Example 2: Migrating to ProcessorLayout
+
+**Before** (ImageProcessor.tsx lines 593-709):
+```typescript
+<div className="flex-1 flex gap-6 min-h-0 items-start">
+  <div className="flex-1 rounded-3xl p-6 ...">
+    <ImagePreview ... />
+  </div>
+  <div className="w-80 flex flex-col gap-4 ...">
+    {/* tools */}
+  </div>
+</div>
+```
+
+**After**:
+```typescript
+<ProcessorLayout
+  layout="flex"
+  preview={
+    <div className="rounded-3xl p-6 ...">
+      <ImagePreview ... />
+    </div>
+  }
+  sidebar={
+    <>
+      <ImageAITools ... />
+      <ImageTransformTools ... />
+      {/* ... */}
+    </>
+  }
+/>
+```
+
+**Benefits**: Consistent layout, easier to maintain, easier to add new processors
+
+### Example 3: Migrating to MetadataSection
+
+**Before** (ImageProcessor.tsx lines 668-707):
+```typescript
+<CollapsibleSection id="privacy-metadata" ...>
+  <div className="space-y-3">
+    {metadata && (
+      <>
+        <div className="space-y-1 text-xs">
+          {getBasicMetadataEntries().map((entry, idx) => (
+            <div key={idx} className="flex justify-between">
+              <span className="text-white/60">{entry.key}:</span>
+              <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
+                {entry.value}
+              </span>
+            </div>
+          ))}
+        </div>
+        {hasExtendedMetadata() && (
+          <ActionButton onClick={() => setShowMetadataDetail(true)} ...>
+            <ExternalLink className="w-3 h-3" />
+            View Extended Metadata
+          </ActionButton>
+        )}
+        <ActionButton onClick={handleStripMetadata} ...>
+          Strip Metadata
+        </ActionButton>
+      </>
+    )}
+  </div>
+</CollapsibleSection>
+```
+
+**After**:
+```typescript
+<MetadataSection
+  sectionId="privacy-metadata"
+  isExpanded={expandedCard === 'privacy-metadata'}
+  onToggle={toggleCard}
+  metadata={metadata ? getBasicMetadataEntries() : null}
+  displayFileName={displayFileName}
+  getBasicEntries={getBasicMetadataEntries}
+  getAllEntries={getAllMetadataEntries}
+  hasExtendedMetadata={hasExtendedMetadata}
+  onStripMetadata={handleStripMetadata}
+  processing={processing}
+/>
+```
+
+**Savings**: ~40 lines per processor = ~120 lines total (for Image, Video, Text)
 
 ---
 
 ## ✅ What's Done Well
 
-1. **Shared Components**: Good start with `Header`, `CollapsibleSection`, `ActionButton`, `Toast`, `MetadataSection`
-2. **TypeScript Usage**: Good type safety throughout
-3. **Tauri Integration**: Proper use of Tauri APIs
-4. **UI Consistency**: Glass morphism design is consistent
-5. **File Organization**: Logical folder structure
+1. **Shared Components**: Good foundation with `Header`, `CollapsibleSection`, `ActionButton`, `Toast`, `MetadataSection`, `ProcessorLayout`
+2. **Hooks**: Excellent use of `useToast`, `useProcessing`, `useImageTransform`, `useMetadata`
+3. **Utilities**: Good file loading and path utilities
+4. **TypeScript**: Strong type safety throughout
+5. **Component Decomposition**: PdfProcessor and ImageProcessor well decomposed
+6. **Tauri Integration**: Proper use of Tauri APIs
+7. **UI Consistency**: Glass morphism design is consistent
 
 ---
 
 ## 📝 Additional Recommendations
 
 ### Testing
-- No tests visible - Consider adding unit tests for utilities and hooks
-- Component tests for shared components
-- Integration tests for processor workflows
+- No tests visible - Consider adding:
+  - Unit tests for utilities (`fileLoaders`, `pathUtils`, `pdfUtils`)
+  - Unit tests for hooks (`useToast`, `useProcessing`, `useMetadata`)
+  - Component tests for shared components
+  - Integration tests for processor workflows
 
 ### Documentation
-- Add JSDoc comments to complex functions
+- Add JSDoc comments to complex functions (coordinate conversion, metadata formatting)
 - Document component props interfaces
 - Add README for component architecture
+- Document why PDF metadata uses separate window vs modal
 
 ### Performance
 - Consider code splitting for large processors
-- Lazy load PDF.js worker
+- Lazy load PDF.js worker (already done)
 - Memoize expensive computations (coordinate conversions, metadata formatting)
 
 ### Accessibility
@@ -397,12 +603,12 @@ export function getFileName(path: string): string
 
 ## Conclusion
 
-The codebase demonstrates solid engineering skills and functional implementation. The main areas for improvement are:
+The codebase demonstrates solid engineering skills and has made **significant progress** in refactoring. The main remaining areas for improvement are:
 
-1. **DRY violations** - Significant duplication that should be addressed
-2. **Component size** - Large components need decomposition
-3. **Inconsistency** - Mixed patterns make it harder to add features
-4. **Modularity** - Need more shared abstractions for common patterns
+1. **Consistency** - Use existing shared components/hooks consistently across all processors
+2. **DRY** - Eliminate remaining duplication (metadata functions, layout code)
+3. **Modularity** - Extract remaining tool components for Video and Text processors
+4. **Standards** - Extract magic numbers, standardize error handling
 
 Addressing these issues would make the codebase:
 - ✅ Easier to maintain
@@ -411,4 +617,4 @@ Addressing these issues would make the codebase:
 - ✅ More testable
 - ✅ Production-ready
 
-**Estimated Refactoring Effort**: 2-3 weeks for full refactoring, but can be done incrementally.
+**Key Insight**: The infrastructure is there (hooks, components, utilities), but they're not being used consistently. The biggest win is migrating all processors to use the existing shared abstractions.

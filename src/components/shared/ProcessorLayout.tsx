@@ -2,6 +2,7 @@ interface ProcessorLayoutProps {
   preview: React.ReactNode;
   sidebar: React.ReactNode;
   layout?: 'flex' | 'grid-2' | 'grid-3';
+  sidebarWidth?: 'default' | 'large';
 }
 
 /**
@@ -12,7 +13,10 @@ export function ProcessorLayout({
   preview,
   sidebar,
   layout = 'flex',
+  sidebarWidth = 'default',
 }: ProcessorLayoutProps) {
+  const sidebarClass = sidebarWidth === 'large' ? 'w-80' : 'w-72';
+
   if (layout === 'grid-2') {
     return (
       <div className="flex-1 grid grid-cols-2 gap-6 overflow-hidden">
@@ -35,7 +39,7 @@ export function ProcessorLayout({
   return (
     <div className="flex-1 flex gap-6 min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">{preview}</div>
-      <div className="w-72 flex-shrink-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden py-6">
+      <div className={`${sidebarClass} flex-shrink-0 flex flex-col gap-4 overflow-y-auto overflow-x-visible py-6 px-1`}>
         {sidebar}
       </div>
     </div>

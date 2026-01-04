@@ -8,6 +8,7 @@ import VideoProcessor from './components/VideoProcessor';
 import TextProcessor from './components/TextProcessor';
 import { detectFileType } from './utils/fileType';
 import { useWindowResize } from './hooks/useWindowResize';
+import { getFileName } from './utils/pathUtils';
 
 type FileType = 'image' | 'pdf' | 'video' | 'text' | null;
 
@@ -66,7 +67,7 @@ function App() {
     if (pdfPaths.length > 1) {
       const pdfFiles = pdfPaths.map(path => ({
         path,
-        name: path.split('/').pop() || '',
+        name: getFileName(path),
       }));
       setDroppedFile({
         path: pdfFiles[0].path,
@@ -79,7 +80,7 @@ function App() {
 
     // Single file (PDF or other type)
     const filePath = paths[0];
-    const fileName = filePath.split('/').pop() || '';
+    const fileName = getFileName(filePath);
     const fileType = detectFileType(fileName);
 
     if (fileType) {

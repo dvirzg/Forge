@@ -12,20 +12,19 @@ import { MergePdfView } from './merge/MergePdfView';
 import { formatFileSize } from '../utils/fileUtils';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useMetadata } from '../hooks/useMetadata';
 import { loadPdfAsBlobUrl } from '../utils/fileLoaders';
 import { screenToPdfCoords, hexToRgb, ZoomState, PageDimensions } from '../utils/pdfUtils';
 import { PdfViewer } from './pdf/PdfViewer';
 import { PdfToolbar } from './pdf/PdfToolbar';
 import { PdfTools } from './pdf/PdfTools';
 import { SignatureModal } from './pdf/SignatureModal';
+import { ProcessorLayout } from './shared/ProcessorLayout';
+import { BaseProcessorProps } from '../types/processor';
+import { PROCESSOR_CONSTANTS } from '../constants/processor';
 
-interface PdfProcessorProps {
-  file: {
-    path: string;
-    name: string;
-  };
+interface PdfProcessorProps extends BaseProcessorProps {
   multiplePdfs?: Array<{ path: string; name: string }>;
-  onReset: () => void;
 }
 
 interface PdfMetadata {
@@ -349,35 +348,22 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
     setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
-  const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries: Array<{ key: string; value: string }> = [];
-    entries.push({ key: 'Pages', value: metadata.pages.toString() });
-    entries.push({ key: 'File Size', value: formatFileSize(metadata.file_size) });
-    if (metadata.pdf_version) entries.push({ key: 'PDF Version', value: metadata.pdf_version });
-    entries.push({ key: 'Encrypted', value: metadata.encrypted ? 'Yes' : 'No' });
-    if (metadata.file_created) entries.push({ key: 'File Created', value: metadata.file_created });
-    if (metadata.file_modified) entries.push({ key: 'File Modified', value: metadata.file_modified });
-    
-    return entries;
-  };
-
-  const getAllMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries = getBasicMetadataEntries();
-    Object.entries(metadata.all_metadata).forEach(([key, value]) => {
-      entries.push({ key, value });
-    });
-    
-    return entries;
-  };
-
-  const hasExtendedMetadata = (): boolean => {
-    if (!metadata) return false;
-    return Object.keys(metadata.all_metadata).length > 0;
-  };
+  const { getBasicMetadataEntries, getAllMetadataEntries, hasExtendedMetadata } = useMetadata({
+    metadata,
+    getBasicEntries: (meta) => {
+      const entries = [];
+      entries.push({ key: 'Pages', value: meta.pages.toString() });
+      entries.push({ key: 'File Size', value: formatFileSize(meta.file_size) });
+      if (meta.pdf_version) entries.push({ key: 'PDF Version', value: meta.pdf_version });
+      entries.push({ key: 'Encrypted', value: meta.encrypted ? 'Yes' : 'No' });
+      if (meta.file_created) entries.push({ key: 'File Created', value: meta.file_created });
+      if (meta.file_modified) entries.push({ key: 'File Modified', value: meta.file_modified });
+      return entries;
+    },
+    getExtendedEntries: (meta) => {
+      return Object.entries(meta.all_metadata).map(([key, value]) => ({ key, value }));
+    },
+  });
 
   const handleOpenPdfWindow = async () => {
     if (!pdfData) return;
@@ -422,13 +408,13 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
       const viewport = page.getViewport({ scale: 1.0 });
 
       const containerRect = pageContainerRef.current.getBoundingClientRect();
-      const padding = 20;
+      const padding = PROCESSOR_CONSTANTS.PREVIEW_PADDING;
       const availableWidth = containerRect.width - padding * 2;
       const availableHeight = containerRect.height - padding * 2;
 
       const scaleX = availableWidth / viewport.width;
       const scaleY = availableHeight / viewport.height;
-      const scale = Math.min(scaleX, scaleY, 1.5);
+      const scale = Math.min(scaleX, scaleY, PROCESSOR_CONSTANTS.MAX_PDF_SCALE);
 
       setPageWidth(viewport.width * scale);
     } catch (error) {
@@ -549,8 +535,8 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
     if (selectedSignatureToPlace) {
       const pdfCoords = convertScreenToPdf(x, y, pageNumber);
       if (pdfCoords) {
-        const sigWidth = 100;
-        const sigHeight = 50;
+        const sigWidth = PROCESSOR_CONSTANTS.SIGNATURE_WIDTH;
+        const sigHeight = PROCESSOR_CONSTANTS.SIGNATURE_HEIGHT;
         const pdfWidth = (pdfCoords.pdfX / pageWidth) * sigWidth;
         const pdfHeight = (pdfCoords.pdfY / pageWidth) * sigHeight;
 
@@ -654,7 +640,7 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
       const sw = ex - sx;
       const sh = ey - sy;
 
-      if (sw > 10 && sh > 10) {
+      if (sw > PROCESSOR_CONSTANTS.MIN_SELECTION_SIZE && sh > PROCESSOR_CONSTANTS.MIN_SELECTION_SIZE) {
         const selCenterX = (sx + ex) / 2 - containerRect.width / 2;
         const selCenterY = (sy + ey) / 2 - containerRect.height / 2;
         const pagePointX = (selCenterX - currentZoom.offsetX) / currentZoom.scale;
@@ -782,7 +768,7 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
             width: highlight.pdfWidth,
             height: highlight.pdfHeight,
             color: rgb(highlightColor.r, highlightColor.g, highlightColor.b),
-            opacity: 0.4,
+            opacity: PROCESSOR_CONSTANTS.HIGHLIGHT_OPACITY,
           });
         } catch (error) {
           console.error('Error adding highlight:', error);
@@ -872,88 +858,89 @@ function PdfProcessor({ file, multiplePdfs, onReset }: PdfProcessorProps) {
         }
       />
 
-      {/* Simple unified layout: Preview left, Tools right */}
-      <div className="flex-1 flex gap-6 min-h-0">
-        {/* PDF Preview Section */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          {viewMode === 'text' && extractedText ? (
-            <div className="h-full flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-white font-semibold">Extracted Text</h3>
-                <button
-                  onClick={() => setViewMode('preview')}
-                  className="glass-card px-3 py-1.5 rounded-lg text-white text-xs hover:scale-105 transition-all"
-                >
-                  Back to Preview
-                </button>
+      <ProcessorLayout
+        layout="flex"
+        preview={
+          <div className="flex-1 min-w-0 flex flex-col">
+            {viewMode === 'text' && extractedText ? (
+              <div className="h-full flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-white font-semibold">Extracted Text</h3>
+                  <button
+                    onClick={() => setViewMode('preview')}
+                    className="glass-card px-3 py-1.5 rounded-lg text-white text-xs hover:scale-105 transition-all"
+                  >
+                    Back to Preview
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <pre className="text-white/80 text-sm whitespace-pre-wrap">{extractedText}</pre>
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto">
-                <pre className="text-white/80 text-sm whitespace-pre-wrap">{extractedText}</pre>
-              </div>
-            </div>
-          ) : (
-            <PdfViewer
-              pdfData={pdfData}
-              pdfLoading={pdfLoading}
-              pdfError={pdfError}
-              fileName={file.name}
-              pageNumber={pageNumber}
-              numPages={numPages}
-              onDocumentLoadSuccess={onDocumentLoadSuccess}
-              onDocumentLoadError={onDocumentLoadError}
-              currentZoom={currentZoom}
-              isZoomMode={isZoomMode}
-              isSelecting={isSelecting}
-              selectionStart={selectionStart}
-              selectionEnd={selectionEnd}
-              markupMode={markupMode}
-              highlights={highlights}
-              signatures={signatures}
-              isDraggingSignature={isDraggingSignature}
-              draggedSignatureId={draggedSignatureId}
-              selectedSignatureToPlace={selectedSignatureToPlace}
-              showTextPopup={showTextPopup}
-              textPopupPosition={textPopupPosition}
-              markupColor={markupColor}
-              pageWidth={pageWidth}
-              pageContainerRef={pageContainerRef}
-              pageElementRef={pageElementRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onWheel={handleWheel}
-              onHighlightSelection={handleHighlightSelection}
-              onMarkupColorChange={setMarkupColor}
-              onTextPopupClose={() => {
-                setShowTextPopup(false);
-                setTextPopupPosition(null);
-              }}
-            />
-          )}
-        </div>
-
-        {/* Tools Section */}
-        <PdfTools
-          expandedCard={expandedCard}
-          onToggleCard={toggleCard}
-          processing={processing}
-          onRotate={handleRotate}
-          onExtractText={handleExtractText}
-          onExtractImages={handleExtractImages}
-          additionalPdfs={additionalPdfs}
-          onAddPdf={handleAddPdf}
-          onMergePdfs={handleMergePdfs}
-          metadata={metadata}
-          fileName={file.name}
-          getBasicMetadataEntries={getBasicMetadataEntries}
-          getAllMetadataEntries={getAllMetadataEntries}
-          hasExtendedMetadata={hasExtendedMetadata}
-          pageNumber={pageNumber}
-          numPages={numPages}
-          onPageChange={handlePageChange}
-          onZoomReset={handleZoomReset}
-        />
-      </div>
+            ) : (
+              <PdfViewer
+                pdfData={pdfData}
+                pdfLoading={pdfLoading}
+                pdfError={pdfError}
+                fileName={file.name}
+                pageNumber={pageNumber}
+                numPages={numPages}
+                onDocumentLoadSuccess={onDocumentLoadSuccess}
+                onDocumentLoadError={onDocumentLoadError}
+                currentZoom={currentZoom}
+                isZoomMode={isZoomMode}
+                isSelecting={isSelecting}
+                selectionStart={selectionStart}
+                selectionEnd={selectionEnd}
+                markupMode={markupMode}
+                highlights={highlights}
+                signatures={signatures}
+                isDraggingSignature={isDraggingSignature}
+                draggedSignatureId={draggedSignatureId}
+                selectedSignatureToPlace={selectedSignatureToPlace}
+                showTextPopup={showTextPopup}
+                textPopupPosition={textPopupPosition}
+                markupColor={markupColor}
+                pageWidth={pageWidth}
+                pageContainerRef={pageContainerRef}
+                pageElementRef={pageElementRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onWheel={handleWheel}
+                onHighlightSelection={handleHighlightSelection}
+                onMarkupColorChange={setMarkupColor}
+                onTextPopupClose={() => {
+                  setShowTextPopup(false);
+                  setTextPopupPosition(null);
+                }}
+              />
+            )}
+          </div>
+        }
+        sidebar={
+          <PdfTools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            processing={processing}
+            onRotate={handleRotate}
+            onExtractText={handleExtractText}
+            onExtractImages={handleExtractImages}
+            additionalPdfs={additionalPdfs}
+            onAddPdf={handleAddPdf}
+            onMergePdfs={handleMergePdfs}
+            metadata={metadata}
+            fileName={file.name}
+            getBasicMetadataEntries={getBasicMetadataEntries}
+            getAllMetadataEntries={getAllMetadataEntries}
+            hasExtendedMetadata={hasExtendedMetadata}
+            pageNumber={pageNumber}
+            numPages={numPages}
+            onPageChange={handlePageChange}
+            onZoomReset={handleZoomReset}
+          />
+        }
+      />
 
       {/* Signature Modal */}
       <SignatureModal

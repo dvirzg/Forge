@@ -1,23 +1,18 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { Type, Search, ExternalLink } from 'lucide-react';
 import { Header } from './shared/Header';
-import { CollapsibleSection } from './shared/CollapsibleSection';
-import { ActionButton } from './shared/ActionButton';
 import { MetadataDetailModal } from './shared/MetadataDetailModal';
 import { Toast } from './shared/Toast';
+import { ProcessorLayout } from './shared/ProcessorLayout';
+import { TextTools } from './text/TextTools';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useMetadata } from '../hooks/useMetadata';
 import { loadTextFile } from '../utils/fileLoaders';
 import { formatFileSize } from '../utils/fileUtils';
+import { BaseProcessorProps } from '../types/processor';
 
-interface TextProcessorProps {
-  file: {
-    path: string;
-    name: string;
-  };
-  onReset: () => void;
-}
+interface TextProcessorProps extends BaseProcessorProps {}
 
 interface TextMetadata {
   file_size: number;
@@ -110,25 +105,21 @@ function TextProcessor({ file, onReset }: TextProcessorProps) {
     setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
-  const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries: Array<{ key: string; value: string }> = [];
-    entries.push({ key: 'File Size', value: formatFileSize(metadata.file_size) });
-    entries.push({ key: 'Lines', value: metadata.line_count.toString() });
-    entries.push({ key: 'Characters', value: metadata.character_count.toString() });
-    entries.push({ key: 'Words', value: metadata.word_count.toString() });
-    if (metadata.encoding) entries.push({ key: 'Encoding', value: metadata.encoding });
-    if (metadata.line_endings) entries.push({ key: 'Line Endings', value: metadata.line_endings });
-    if (metadata.file_created) entries.push({ key: 'File Created', value: metadata.file_created });
-    if (metadata.file_modified) entries.push({ key: 'File Modified', value: metadata.file_modified });
-    
-    return entries;
-  };
-
-  const getAllMetadataEntries = (): Array<{ key: string; value: string }> => {
-    return getBasicMetadataEntries();
-  };
+  const { getBasicMetadataEntries, getAllMetadataEntries, hasExtendedMetadata } = useMetadata({
+    metadata,
+    getBasicEntries: (meta) => {
+      const entries = [];
+      entries.push({ key: 'File Size', value: formatFileSize(meta.file_size) });
+      entries.push({ key: 'Lines', value: meta.line_count.toString() });
+      entries.push({ key: 'Characters', value: meta.character_count.toString() });
+      entries.push({ key: 'Words', value: meta.word_count.toString() });
+      if (meta.encoding) entries.push({ key: 'Encoding', value: meta.encoding });
+      if (meta.line_endings) entries.push({ key: 'Line Endings', value: meta.line_endings });
+      if (meta.file_created) entries.push({ key: 'File Created', value: meta.file_created });
+      if (meta.file_modified) entries.push({ key: 'File Modified', value: meta.file_modified });
+      return entries;
+    },
+  });
 
   return (
     <div className="h-full flex flex-col">
@@ -138,154 +129,46 @@ function TextProcessor({ file, onReset }: TextProcessorProps) {
         onBack={onReset}
       />
 
-      <div className="flex-1 grid grid-cols-3 gap-6 overflow-hidden">
-        {/* Left column - Text Editor */}
-        <div className="col-span-2 glass-card rounded-3xl p-6 flex flex-col">
-          <h3 className="text-white font-semibold mb-4">Editor</h3>
-          <textarea
-            value={text}
-            onChange={handleTextChange}
-            className="flex-1 w-full glass-card px-4 py-3 rounded-2xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50 resize-none font-mono text-sm"
-            placeholder="Your text will appear here..."
-          />
-          <div className="mt-3 text-white/60 text-xs">
-            {text.length} characters | {text.split(/\s+/).filter(w => w).length} words
+      <ProcessorLayout
+        layout="grid-3"
+        preview={
+          <div className="glass-card rounded-3xl p-6 flex flex-col">
+            <h3 className="text-white font-semibold mb-4">Editor</h3>
+            <textarea
+              value={text}
+              onChange={handleTextChange}
+              className="flex-1 w-full glass-card px-4 py-3 rounded-2xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50 resize-none font-mono text-sm"
+              placeholder="Your text will appear here..."
+            />
+            <div className="mt-3 text-white/60 text-xs">
+              {text.length} characters | {text.split(/\s+/).filter(w => w).length} words
+            </div>
           </div>
-        </div>
-
-        {/* Right column - Controls */}
-        <div className="flex flex-col gap-4 overflow-y-auto">
-          {/* Case Conversion */}
-          <CollapsibleSection
-            id="case-conversion"
-            title="Case Conversion"
-            icon={Type}
-            isExpanded={expandedCard === 'case-conversion'}
-            onToggle={toggleCard}
-          >
-            <div className="grid grid-cols-2 gap-2">
-              <ActionButton onClick={() => handleConvertCase('upper')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                UPPER
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('lower')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                lower
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('title')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                Title Case
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('camel')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                camelCase
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('pascal')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                PascalCase
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('snake')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                snake_case
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('kebab')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                kebab-case
-              </ActionButton>
-              <ActionButton onClick={() => handleConvertCase('screaming_snake')} disabled={processing} className="px-3 py-2 rounded-xl text-xs">
-                SCREAMING
-              </ActionButton>
-            </div>
-          </CollapsibleSection>
-
-          {/* Find & Replace */}
-          <CollapsibleSection
-            id="find-replace"
-            title="Find & Replace"
-            icon={Search}
-            isExpanded={expandedCard === 'find-replace'}
-            onToggle={toggleCard}
-          >
-            <div className="space-y-3">
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Find</label>
-                <input
-                  type="text"
-                  value={findText}
-                  onChange={(e) => setFindText(e.target.value)}
-                  className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                  placeholder="Text to find..."
-                />
-              </div>
-              <div>
-                <label className="text-white/60 text-sm mb-1 block">Replace</label>
-                <input
-                  type="text"
-                  value={replaceText}
-                  onChange={(e) => setReplaceText(e.target.value)}
-                  className="w-full glass-card px-4 py-2 rounded-xl text-white bg-white/5 border border-white/10 focus:outline-none focus:border-blue-400/50"
-                  placeholder="Replace with..."
-                />
-              </div>
-              <ActionButton onClick={handleReplaceAll} disabled={processing} className="w-full">
-                Replace All
-              </ActionButton>
-            </div>
-          </CollapsibleSection>
-
-          {/* Quick Actions */}
-          <CollapsibleSection
-            id="quick-actions"
-            title="Quick Actions"
-            icon={Type}
-            isExpanded={expandedCard === 'quick-actions'}
-            onToggle={toggleCard}
-          >
-            <div className="space-y-2">
-              <ActionButton onClick={() => setText(text.trim())} className="w-full px-4 py-2 rounded-xl text-sm">
-                Trim Whitespace
-              </ActionButton>
-              <ActionButton onClick={() => setText(text.split('\n').filter(line => line.trim()).join('\n'))} className="w-full px-4 py-2 rounded-xl text-sm">
-                Remove Empty Lines
-              </ActionButton>
-              <ActionButton onClick={() => setText([...new Set(text.split('\n'))].join('\n'))} className="w-full px-4 py-2 rounded-xl text-sm">
-                Remove Duplicates
-              </ActionButton>
-              <ActionButton onClick={() => setText(text.split('\n').sort().join('\n'))} className="w-full px-4 py-2 rounded-xl text-sm">
-                Sort Lines
-              </ActionButton>
-            </div>
-          </CollapsibleSection>
-
-          {/* Metadata */}
-          <CollapsibleSection
-            id="metadata"
-            title="Metadata"
-            icon={Type}
-            isExpanded={expandedCard === 'metadata'}
-            onToggle={toggleCard}
-          >
-            <div className="space-y-3">
-              {metadata && (
-                <>
-                  <div className="space-y-1 text-xs">
-                    {getBasicMetadataEntries().map((entry, idx) => (
-                      <div key={idx} className="flex justify-between">
-                        <span className="text-white/60">{entry.key}:</span>
-                        <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
-                          {entry.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {getAllMetadataEntries().length > 6 && (
-                    <ActionButton
-                      onClick={() => setShowMetadataDetail(true)}
-                      className="w-full px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2 text-white/80 hover:text-white"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      View All {getAllMetadataEntries().length} Properties
-                    </ActionButton>
-                  )}
-                </>
-              )}
-            </div>
-          </CollapsibleSection>
-        </div>
-      </div>
+        }
+        sidebar={
+          <TextTools
+            expandedCard={expandedCard}
+            onToggleCard={toggleCard}
+            processing={processing}
+            findText={findText}
+            replaceText={replaceText}
+            text={text}
+            onFindTextChange={setFindText}
+            onReplaceTextChange={setReplaceText}
+            onConvertCase={handleConvertCase}
+            onReplaceAll={handleReplaceAll}
+            onTrimWhitespace={() => setText(text.trim())}
+            onRemoveEmptyLines={() => setText(text.split('\n').filter(line => line.trim()).join('\n'))}
+            onRemoveDuplicates={() => setText([...new Set(text.split('\n'))].join('\n'))}
+            onSortLines={() => setText(text.split('\n').sort().join('\n'))}
+            metadata={metadata}
+            fileName={file.name}
+            getBasicMetadataEntries={getBasicMetadataEntries}
+            getAllMetadataEntries={getAllMetadataEntries}
+            hasExtendedMetadata={hasExtendedMetadata}
+          />
+        }
+      />
 
       {/* Metadata Detail Modal */}
       <MetadataDetailModal

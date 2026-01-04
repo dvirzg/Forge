@@ -7,32 +7,27 @@ import {
   Save,
   FileDown,
   RotateCcw,
-  Trash2,
-  ExternalLink,
 } from 'lucide-react';
 import { Header } from './shared/Header';
-import { CollapsibleSection } from './shared/CollapsibleSection';
-import { ActionButton } from './shared/ActionButton';
 import { MetadataDetailModal } from './shared/MetadataDetailModal';
+import { MetadataSection } from './shared/MetadataSection';
+import { ProcessorLayout } from './shared/ProcessorLayout';
 import { Toast } from './shared/Toast';
 import { useToast } from '../hooks/useToast';
 import { useProcessing } from '../hooks/useProcessing';
+import { useMetadata } from '../hooks/useMetadata';
 import { useImageTransform } from '../hooks/useImageTransform';
 import { loadImageAsDataUrl } from '../utils/fileLoaders';
 import { formatFileSize } from '../utils/fileUtils';
+import { changeFileExtension, getFileName } from '../utils/pathUtils';
+import { BaseProcessorProps } from '../types/processor';
 import { ImagePreview } from './image/ImagePreview';
 import { ImageAITools } from './image/ImageAITools';
 import { ImageTransformTools } from './image/ImageTransformTools';
 import { ImageConvertTools } from './image/ImageConvertTools';
 import { ImageCompressTools } from './image/ImageCompressTools';
 
-interface ImageProcessorProps {
-  file: {
-    path: string;
-    name: string;
-  };
-  onReset: () => void;
-}
+interface ImageProcessorProps extends BaseProcessorProps {}
 
 interface ImageMetadata {
   width: number;
@@ -166,7 +161,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       showToast('Removing background...');
 
       const outputPath = await save({
-        defaultPath: file.name.replace(/\.[^/.]+$/, '_no_bg.png'),
+        defaultPath: changeFileExtension(file.name, 'png').replace('.png', '_no_bg.png'),
         filters: [{ name: 'Image', extensions: ['png'] }],
       });
 
@@ -275,7 +270,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         outputPath = currentFilePath;
       } else {
         outputPath = await save({
-          defaultPath: file.name.replace(/\.[^/.]+$/, '_transformed.png'),
+          defaultPath: changeFileExtension(file.name, 'png').replace('.png', '_transformed.png'),
           filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
         });
 
@@ -354,7 +349,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       showToast(`Converting to ${format.toUpperCase()}...`);
 
       const outputPath = await save({
-        defaultPath: file.name.replace(/\.[^/.]+$/, `.${format}`),
+        defaultPath: changeFileExtension(file.name, format),
         filters: [{ name: 'Image', extensions: [format] }],
       });
 
@@ -465,7 +460,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
 
       setCurrentFilePath(result.output_path);
       setCurrentWorkingPath(result.output_path);
-      setDisplayFileName(result.output_path.split('/').pop() || displayFileName);
+      setDisplayFileName(getFileName(result.output_path) || displayFileName);
 
       const newMetadata = await invoke<ImageMetadata>('get_image_metadata', {
         inputPath: result.output_path,
@@ -505,40 +500,29 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
-  const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries: Array<{ key: string; value: string }> = [];
-    entries.push({ key: 'Width', value: `${metadata.width}px` });
-    entries.push({ key: 'Height', value: `${metadata.height}px` });
-    entries.push({ key: 'Format', value: metadata.format });
-    entries.push({ key: 'Color Type', value: metadata.color_type });
-    if (metadata.bit_depth) entries.push({ key: 'Bit Depth', value: metadata.bit_depth });
-    entries.push({ key: 'Has Alpha', value: metadata.has_alpha ? 'Yes' : 'No' });
-    entries.push({ key: 'File Size', value: formatFileSize(metadata.file_size) });
-    if (metadata.file_created) entries.push({ key: 'Created', value: metadata.file_created });
-    if (metadata.file_modified) entries.push({ key: 'Modified', value: metadata.file_modified });
-    
-    return entries;
-  };
-
-  const getAllMetadataEntries = (): Array<{ key: string; value: string }> => {
-    if (!metadata) return [];
-    
-    const entries = getBasicMetadataEntries();
-    Object.entries(metadata.exif).forEach(([key, value]) => entries.push({ key: `EXIF: ${key}`, value }));
-    Object.entries(metadata.iptc).forEach(([key, value]) => entries.push({ key: `IPTC: ${key}`, value }));
-    Object.entries(metadata.xmp).forEach(([key, value]) => entries.push({ key: `XMP: ${key}`, value }));
-    
-    return entries;
-  };
-
-  const hasExtendedMetadata = (): boolean => {
-    if (!metadata) return false;
-    return Object.keys(metadata.exif).length > 0 || 
-           Object.keys(metadata.iptc).length > 0 || 
-           Object.keys(metadata.xmp).length > 0;
-  };
+  const { getBasicMetadataEntries, getAllMetadataEntries, hasExtendedMetadata } = useMetadata({
+    metadata,
+    getBasicEntries: (meta) => {
+      const entries = [];
+      entries.push({ key: 'Width', value: `${meta.width}px` });
+      entries.push({ key: 'Height', value: `${meta.height}px` });
+      entries.push({ key: 'Format', value: meta.format });
+      entries.push({ key: 'Color Type', value: meta.color_type });
+      if (meta.bit_depth) entries.push({ key: 'Bit Depth', value: meta.bit_depth });
+      entries.push({ key: 'Has Alpha', value: meta.has_alpha ? 'Yes' : 'No' });
+      entries.push({ key: 'File Size', value: formatFileSize(meta.file_size) });
+      if (meta.file_created) entries.push({ key: 'Created', value: meta.file_created });
+      if (meta.file_modified) entries.push({ key: 'Modified', value: meta.file_modified });
+      return entries;
+    },
+    getExtendedEntries: (meta) => {
+      return [
+        ...Object.entries(meta.exif).map(([key, value]) => ({ key: `EXIF: ${key}`, value })),
+        ...Object.entries(meta.iptc).map(([key, value]) => ({ key: `IPTC: ${key}`, value })),
+        ...Object.entries(meta.xmp).map(([key, value]) => ({ key: `XMP: ${key}`, value })),
+      ];
+    },
+  });
 
   return (
     <div className="h-full flex flex-col">
@@ -590,123 +574,98 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         }
       />
 
-      <div className="flex-1 flex gap-6 min-h-0 items-start">
-        {/* Preview */}
-        <div className="flex-1 rounded-3xl p-6 flex items-center justify-center min-w-0 relative" style={{ overflow: isCropping ? 'visible' : 'hidden' }}>
-          <ImagePreview
-            imageSrc={imageSrc}
-            imageLoading={imageLoading}
-            imageError={imageError}
-            filePath={file.path}
-            isCropping={isCropping}
-            cropperRef={cropperRef}
-            processing={processing}
-            onCrop={handleCrop}
-            onCancelCrop={cancelCrop}
-            onImageError={() => setImageError(true)}
-          />
-        </div>
+      <ProcessorLayout
+        layout="flex"
+        sidebarWidth="large"
+        preview={
+          <div className="rounded-3xl p-6 flex items-center justify-center min-w-0 relative" style={{ overflow: isCropping ? 'visible' : 'hidden' }}>
+            <ImagePreview
+              imageSrc={imageSrc}
+              imageLoading={imageLoading}
+              imageError={imageError}
+              filePath={file.path}
+              isCropping={isCropping}
+              cropperRef={cropperRef}
+              processing={processing}
+              onCrop={handleCrop}
+              onCancelCrop={cancelCrop}
+              onImageError={() => setImageError(true)}
+            />
+          </div>
+        }
+        sidebar={
+          <>
+            {/* AI Tools */}
+            <ImageAITools
+              expandedCard={expandedCard}
+              onToggleCard={toggleCard}
+              modelAvailable={modelAvailable}
+              downloadingModel={downloadingModel}
+              processing={processing}
+              onDownloadModel={handleDownloadModel}
+              onRemoveBackground={handleRemoveBackground}
+            />
 
-        {/* Controls */}
-        <div className="w-80 flex flex-col gap-4 overflow-y-auto overflow-x-visible flex-shrink-0 pt-6 pb-6 px-1">
-          {/* AI Tools */}
-          <ImageAITools
-            expandedCard={expandedCard}
-            onToggleCard={toggleCard}
-            modelAvailable={modelAvailable}
-            downloadingModel={downloadingModel}
-            processing={processing}
-            onDownloadModel={handleDownloadModel}
-            onRemoveBackground={handleRemoveBackground}
-          />
+            {/* Transform */}
+            <ImageTransformTools
+              expandedCard={expandedCard}
+              onToggleCard={toggleCard}
+              processing={processing}
+              isCropping={isCropping}
+              onRotate={handleRotate}
+              onFlip={handleFlip}
+              onInitializeCrop={initializeCrop}
+            />
 
-          {/* Transform */}
-          <ImageTransformTools
-            expandedCard={expandedCard}
-            onToggleCard={toggleCard}
-            processing={processing}
-            isCropping={isCropping}
-            onRotate={handleRotate}
-            onFlip={handleFlip}
-            onInitializeCrop={initializeCrop}
-          />
+            {/* Convert */}
+            <ImageConvertTools
+              expandedCard={expandedCard}
+              onToggleCard={toggleCard}
+              processing={processing}
+              isEditingCustomFormat={isEditingCustomFormat}
+              customFormat={customFormat}
+              onFormatChange={handleConvert}
+              onCustomFormatChange={setCustomFormat}
+              onCustomFormatSubmit={handleCustomFormatSubmit}
+              onStartEditingCustomFormat={() => setIsEditingCustomFormat(true)}
+              onCancelEditingCustomFormat={() => {
+                setIsEditingCustomFormat(false);
+                setCustomFormat('');
+              }}
+            />
 
-          {/* Convert */}
-          <ImageConvertTools
-            expandedCard={expandedCard}
-            onToggleCard={toggleCard}
-            processing={processing}
-            isEditingCustomFormat={isEditingCustomFormat}
-            customFormat={customFormat}
-            onFormatChange={handleConvert}
-            onCustomFormatChange={setCustomFormat}
-            onCustomFormatSubmit={handleCustomFormatSubmit}
-            onStartEditingCustomFormat={() => setIsEditingCustomFormat(true)}
-            onCancelEditingCustomFormat={() => {
-              setIsEditingCustomFormat(false);
-              setCustomFormat('');
-            }}
-          />
+            {/* Compress & Optimize */}
+            <ImageCompressTools
+              expandedCard={expandedCard}
+              onToggleCard={toggleCard}
+              processing={processing}
+              compressionLevel={compressionLevel}
+              compressionFormat={compressionFormat}
+              estimatedSize={estimatedSize}
+              isEstimating={isEstimating}
+              originalSize={metadata?.file_size || 0}
+              metadataAvailable={!!metadata}
+              onCompressionLevelChange={handleCompressionLevelChange}
+              onCompressionFormatChange={handleCompressionFormatChange}
+              onCompress={handleCompress}
+            />
 
-          {/* Compress & Optimize */}
-          <ImageCompressTools
-            expandedCard={expandedCard}
-            onToggleCard={toggleCard}
-            processing={processing}
-            compressionLevel={compressionLevel}
-            compressionFormat={compressionFormat}
-            estimatedSize={estimatedSize}
-            isEstimating={isEstimating}
-            originalSize={metadata?.file_size || 0}
-            metadataAvailable={!!metadata}
-            onCompressionLevelChange={handleCompressionLevelChange}
-            onCompressionFormatChange={handleCompressionFormatChange}
-            onCompress={handleCompress}
-          />
-
-          {/* Metadata */}
-          <CollapsibleSection
-            id="privacy-metadata"
-            title="Metadata"
-            icon={Trash2}
-            isExpanded={expandedCard === 'privacy-metadata'}
-            onToggle={toggleCard}
-          >
-            <div className="space-y-3">
-              {metadata && (
-                <>
-                  <div className="space-y-1 text-xs">
-                    {getBasicMetadataEntries().map((entry, idx) => (
-                      <div key={idx} className="flex justify-between">
-                        <span className="text-white/60">{entry.key}:</span>
-                        <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
-                          {entry.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {hasExtendedMetadata() && (
-                    <ActionButton
-                      onClick={() => setShowMetadataDetail(true)}
-                      className="w-full px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-2 text-white/80 hover:text-white"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      View Extended Metadata
-                    </ActionButton>
-                  )}
-                  <ActionButton
-                    onClick={handleStripMetadata}
-                    disabled={processing}
-                    className="w-full px-3 py-2 rounded-xl text-xs"
-                  >
-                    Strip Metadata
-                  </ActionButton>
-                </>
-              )}
-            </div>
-          </CollapsibleSection>
-        </div>
-      </div>
+            {/* Metadata */}
+            <MetadataSection
+              sectionId="privacy-metadata"
+              isExpanded={expandedCard === 'privacy-metadata'}
+              onToggle={toggleCard}
+              metadata={metadata ? getBasicMetadataEntries() : null}
+              displayFileName={displayFileName}
+              getBasicEntries={getBasicMetadataEntries}
+              getAllEntries={getAllMetadataEntries}
+              hasExtendedMetadata={hasExtendedMetadata}
+              onStripMetadata={handleStripMetadata}
+              processing={processing}
+            />
+          </>
+        }
+      />
 
       {/* Metadata Detail Modal */}
       <MetadataDetailModal

@@ -11,10 +11,12 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^1.5.3",
+    "clsx": "^2.0.0",
+    "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "lucide-react": "^0.294.0",
-    "clsx": "^2.0.0"
+    "cropperjs": "^1.6.2",
+    "react-cropper": "^2.1.6"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.9",

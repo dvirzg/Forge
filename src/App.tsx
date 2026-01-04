@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { appWindow, LogicalSize, LogicalPosition, currentMonitor } from '@tauri-apps/api/window';
+import { appWindow, LogicalSize, LogicalPosition, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/tauri';
 import {
   Image,
@@ -62,6 +62,15 @@ function App() {
     const resizeWindow = async () => {
       try {
         if (droppedFile) {
+          // Get monitor size to calculate maximum dimensions (50% of screen)
+          // Use primary monitor for consistency across multi-monitor setups
+          // Fallback to current monitor if primary is unavailable
+          const primary = await primaryMonitor();
+          const current = await currentMonitor();
+          const monitor = primary || current;
+          const maxWidth = monitor ? monitor.size.width * 0.5 : 1920;
+          const maxHeight = monitor ? monitor.size.height * 0.5 : 1080;
+
           // Minimum window size to fit all expanded cards
           const minWidth = 800;
           const minHeight = 600;
@@ -81,21 +90,21 @@ function App() {
               });
 
               // Calculate window size (add padding for UI controls ~400px width)
-              // Cap height to reasonable maximum and ensure minimum
-              newWidth = Math.max(Math.min(metadata.width + 400, 1600), minWidth);
-              newHeight = Math.max(Math.min(metadata.height + 100, 700), minHeight);
+              // Cap to 75% of screen size and ensure minimum
+              newWidth = Math.max(Math.min(metadata.width + 400, maxWidth), minWidth);
+              newHeight = Math.max(Math.min(metadata.height + 100, maxHeight), minHeight);
             } else if (droppedFile.type === 'video' || droppedFile.type === 'pdf') {
-              newWidth = Math.max(1000, minWidth);
-              newHeight = Math.max(600, minHeight);
+              newWidth = Math.max(Math.min(1000, maxWidth), minWidth);
+              newHeight = Math.max(Math.min(600, maxHeight), minHeight);
             } else {
               // For text/audio, use fixed size
-              newWidth = Math.max(1000, minWidth);
-              newHeight = Math.max(600, minHeight);
+              newWidth = Math.max(Math.min(1000, maxWidth), minWidth);
+              newHeight = Math.max(Math.min(600, maxHeight), minHeight);
             }
           } catch (error) {
             console.error('Error getting file metadata:', error);
-            newWidth = Math.max(1000, minWidth);
-            newHeight = Math.max(600, minHeight);
+            newWidth = Math.max(Math.min(1000, maxWidth), minWidth);
+            newHeight = Math.max(Math.min(600, maxHeight), minHeight);
           }
 
           // Resize window

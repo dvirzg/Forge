@@ -1,5 +1,6 @@
 use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
+use chrono;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReplaceParams {
@@ -34,4 +35,81 @@ pub fn replace_all_text(text: String, find: String, replace: String) -> Result<S
     }
 
     Ok(text.replace(&find, &replace))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TextMetadata {
+    file_size: u64,
+    line_count: u64,
+    character_count: u64,
+    word_count: u64,
+    encoding: Option<String>,
+    line_endings: Option<String>,
+    file_created: Option<String>,
+    file_modified: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_text_metadata(input_path: String) -> Result<TextMetadata, String> {
+    tokio::task::spawn_blocking(move || {
+        let content = std::fs::read_to_string(&input_path)
+            .map_err(|e| format!("Failed to read text file: {}", e))?;
+
+        // Get file metadata
+        let file_metadata = std::fs::metadata(&input_path)
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+        let file_size = file_metadata.len();
+        
+        let file_created = file_metadata.created()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+        
+        let file_modified = file_metadata.modified()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+
+        // Calculate text statistics
+        let line_count = content.lines().count() as u64;
+        let character_count = content.chars().count() as u64;
+        let word_count = content.split_whitespace().count() as u64;
+
+        // Detect line endings
+        let line_endings = if content.contains("\r\n") {
+            Some("CRLF (Windows)".to_string())
+        } else if content.contains('\r') {
+            Some("CR (Old Mac)".to_string())
+        } else if content.contains('\n') {
+            Some("LF (Unix/Mac)".to_string())
+        } else {
+            None
+        };
+
+        // Try to detect encoding (simplified - assume UTF-8 if valid)
+        let encoding = if content.is_char_boundary(0) {
+            Some("UTF-8".to_string())
+        } else {
+            Some("Unknown".to_string())
+        };
+
+        Ok::<TextMetadata, String>(TextMetadata {
+            file_size,
+            line_count,
+            character_count,
+            word_count,
+            encoding,
+            line_endings,
+            file_created,
+            file_modified,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }

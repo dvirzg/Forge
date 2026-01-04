@@ -1,6 +1,10 @@
 use image::{GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use exif::Reader;
 // use rmbg::Rmbg;  // Temporarily disabled - incompatible with current ort versions
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -9,6 +13,14 @@ pub struct ImageMetadata {
     height: u32,
     format: String,
     color_type: String,
+    file_size: u64,
+    bit_depth: Option<String>,
+    has_alpha: bool,
+    exif: HashMap<String, String>,
+    iptc: HashMap<String, String>,
+    xmp: HashMap<String, String>,
+    file_created: Option<String>,
+    file_modified: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -210,12 +222,66 @@ pub async fn get_image_metadata(input_path: String) -> Result<ImageMetadata, Str
             .unwrap_or_else(|| "Unknown".to_string());
 
         let color_type = format!("{:?}", img.color());
+        let has_alpha = img.color().has_alpha();
+        
+        // Get file metadata
+        let file_metadata = std::fs::metadata(&input_path)
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+        let file_size = file_metadata.len();
+        
+        let file_created = file_metadata.created()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+        
+        let file_modified = file_metadata.modified()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+
+        // Extract bit depth from color type
+        let bit_depth = match img.color() {
+            image::ColorType::L8 | image::ColorType::Rgb8 | image::ColorType::Rgba8 => Some("8-bit".to_string()),
+            image::ColorType::L16 | image::ColorType::Rgb16 | image::ColorType::Rgba16 => Some("16-bit".to_string()),
+            _ => None,
+        };
+
+        // Extract EXIF data - dynamically get all fields
+        let mut exif_data = HashMap::new();
+        if let Ok(file) = File::open(&input_path) {
+            let mut bufreader = BufReader::new(&file);
+            let exif_reader = Reader::new();
+            if let Ok(exif) = exif_reader.read_from_container(&mut bufreader) {
+                for field in exif.fields() {
+                    let value_str = field.display_value().with_unit(&exif).to_string();
+                    let display_name = format!("{}", field.tag);
+                    exif_data.insert(display_name, value_str);
+                }
+            }
+        }
+
+        let iptc_data = HashMap::new();
+        let xmp_data = HashMap::new();
 
         Ok::<ImageMetadata, String>(ImageMetadata {
             width,
             height,
             format,
             color_type,
+            file_size,
+            bit_depth,
+            has_alpha,
+            exif: exif_data,
+            iptc: iptc_data,
+            xmp: xmp_data,
+            file_created,
+            file_modified,
         })
     })
     .await
@@ -233,6 +299,31 @@ pub async fn strip_metadata(input_path: String, output_path: String) -> Result<S
             .map_err(|e| format!("Failed to save image: {}", e))?;
 
         Ok::<String, String>("Metadata stripped successfully".to_string())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn crop_image_preview(
+    input_path: String,
+    crop: CropParams,
+) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || {
+        let img = image::open(&input_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let cropped = img.crop_imm(crop.x, crop.y, crop.width, crop.height);
+
+        let mut buffer = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut buffer);
+            cropped
+                .write_to(&mut cursor, ImageFormat::Png)
+                .map_err(|e| format!("Failed to encode image: {}", e))?;
+        }
+
+        Ok::<Vec<u8>, String>(buffer)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

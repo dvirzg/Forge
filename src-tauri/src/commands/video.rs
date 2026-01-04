@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use anyhow::Result;
+use std::collections::HashMap;
+use chrono;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TrimParams {
@@ -160,6 +162,114 @@ pub async fn video_to_gif(
         let _ = std::fs::remove_file(palette_path);
 
         Ok::<String, String>("Video converted to GIF successfully".to_string())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VideoMetadata {
+    file_size: u64,
+    file_created: Option<String>,
+    file_modified: Option<String>,
+    all_metadata: HashMap<String, String>,
+}
+
+#[tauri::command]
+pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, String> {
+    tokio::task::spawn_blocking(move || {
+        // Get file metadata
+        let file_metadata = std::fs::metadata(&input_path)
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+        let file_size = file_metadata.len();
+        
+        let file_created = file_metadata.created()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+        
+        let file_modified = file_metadata.modified()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+
+        // Use ffprobe to get video metadata
+        let output = Command::new("ffprobe")
+            .args(&[
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                &input_path,
+            ])
+            .output();
+
+        let mut all_metadata = HashMap::new();
+
+        if let Ok(output) = output {
+            if output.status.success() {
+                if let Ok(json_str) = String::from_utf8(output.stdout) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        fn extract_value(val: &serde_json::Value) -> String {
+                            match val {
+                                serde_json::Value::String(s) => s.clone(),
+                                serde_json::Value::Number(n) => n.to_string(),
+                                serde_json::Value::Bool(b) => b.to_string(),
+                                serde_json::Value::Null => "null".to_string(),
+                                _ => val.to_string(),
+                            }
+                        }
+                        
+                        fn flatten_json(prefix: &str, obj: &serde_json::Value, map: &mut HashMap<String, String>) {
+                            match obj {
+                                serde_json::Value::Object(map_obj) => {
+                                    for (key, val) in map_obj {
+                                        let new_key = if prefix.is_empty() {
+                                            key.clone()
+                                        } else {
+                                            format!("{}.{}", prefix, key)
+                                        };
+                                        if val.is_object() || val.is_array() {
+                                            flatten_json(&new_key, val, map);
+                                        } else {
+                                            map.insert(new_key, extract_value(val));
+                                        }
+                                    }
+                                }
+                                serde_json::Value::Array(arr) => {
+                                    for (idx, val) in arr.iter().enumerate() {
+                                        let new_key = format!("{}[{}]", prefix, idx);
+                                        if val.is_object() || val.is_array() {
+                                            flatten_json(&new_key, val, map);
+                                        } else {
+                                            map.insert(new_key, extract_value(val));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    map.insert(prefix.to_string(), extract_value(obj));
+                                }
+                            }
+                        }
+                        
+                        flatten_json("", &json, &mut all_metadata);
+                    }
+                }
+            }
+        }
+
+        Ok::<VideoMetadata, String>(VideoMetadata {
+            file_size,
+            file_created,
+            file_modified,
+            all_metadata,
+        })
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

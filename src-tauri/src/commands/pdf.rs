@@ -1,11 +1,24 @@
 use lopdf::{Document, Object};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use chrono;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PdfInfo {
     pages: u32,
     title: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PdfMetadata {
+    pages: u32,
+    file_size: u64,
+    pdf_version: Option<String>,
+    encrypted: bool,
+    file_created: Option<String>,
+    file_modified: Option<String>,
+    all_metadata: HashMap<String, String>,
 }
 
 #[tauri::command]
@@ -135,6 +148,72 @@ pub async fn extract_images(input_path: String, output_dir: String) -> Result<Ve
         }
 
         Ok::<Vec<String>, String>(image_paths)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String> {
+    tokio::task::spawn_blocking(move || {
+        let doc = Document::load(&input_path)
+            .map_err(|e| format!("Failed to load PDF: {}", e))?;
+
+        let pages = doc.get_pages();
+        let page_count = pages.len() as u32;
+        let pdf_version = Some(doc.version.clone());
+
+        // Get file metadata
+        let file_metadata = std::fs::metadata(&input_path)
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+        let file_size = file_metadata.len();
+        
+        let file_created = file_metadata.created()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+        
+        let file_modified = file_metadata.modified()
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            });
+
+        // Extract PDF document info - dynamically get all fields
+        let mut pdf_metadata = HashMap::new();
+        let encrypted = doc.trailer.get(b"Encrypt").is_ok();
+
+        if let Ok(&Object::Reference(ref_id)) = doc.trailer.get(b"Info") {
+            if let Ok(Object::Dictionary(ref dict)) = doc.get_object(ref_id) {
+                for (key, value) in dict.iter() {
+                    if let Ok(key_str) = String::from_utf8(key.to_vec()) {
+                        let value_str = match value {
+                            Object::String(bytes, _) => String::from_utf8(bytes.clone()).unwrap_or_default(),
+                            Object::Integer(i) => i.to_string(),
+                            Object::Real(f) => f.to_string(),
+                            Object::Boolean(b) => b.to_string(),
+                            _ => format!("{:?}", value),
+                        };
+                        pdf_metadata.insert(key_str, value_str);
+                    }
+                }
+            }
+        }
+
+        Ok::<PdfMetadata, String>(PdfMetadata {
+            pages: page_count,
+            file_size,
+            pdf_version,
+            encrypted,
+            file_created,
+            file_modified,
+            all_metadata: pdf_metadata,
+        })
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

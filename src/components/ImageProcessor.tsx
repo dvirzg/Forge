@@ -4,6 +4,8 @@ import { save } from '@tauri-apps/api/dialog';
 import { readBinaryFile, writeBinaryFile, removeFile, createDir, renameFile } from '@tauri-apps/api/fs';
 import { join, dirname } from '@tauri-apps/api/path';
 import { appDataDir } from '@tauri-apps/api/path';
+import Cropper from 'react-cropper';
+import 'cropperjs/dist/cropper.css';
 import {
   RotateCw,
   FlipHorizontal,
@@ -15,7 +17,11 @@ import {
   ChevronDown,
   Save,
   FileDown,
-  RotateCcw
+  RotateCcw,
+  Scissors,
+  Check,
+  X,
+  ExternalLink
 } from 'lucide-react';
 
 interface ImageProcessorProps {
@@ -31,6 +37,14 @@ interface ImageMetadata {
   height: number;
   format: string;
   color_type: string;
+  file_size: number;
+  bit_depth?: string;
+  has_alpha: boolean;
+  exif: Record<string, string>;
+  iptc: Record<string, string>;
+  xmp: Record<string, string>;
+  file_created?: string;
+  file_modified?: string;
 }
 
 function ImageProcessor({ file, onReset }: ImageProcessorProps) {
@@ -57,6 +71,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const [modelAvailable, setModelAvailable] = useState<boolean | null>(null);
   const [downloadingModel, setDownloadingModel] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
   const [imageSrc, setImageSrc] = useState<string>('');
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [transformedImageData, setTransformedImageData] = useState<Uint8Array | null>(null);
@@ -67,23 +82,33 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const [editedFileName, setEditedFileName] = useState<string>('');
   const [displayFileName, setDisplayFileName] = useState<string>(file.name);
   const [currentFilePath, setCurrentFilePath] = useState<string>(file.path);
+  const [isCropping, setIsCropping] = useState(false);
+  const cropperRef = useRef<HTMLImageElement>(null);
 
   // Load image as base64
   useEffect(() => {
     const loadImage = async () => {
+      setImageLoading(true);
+      setImageError(false);
       try {
         const imageData = await readBinaryFile(currentFilePath);
         const blob = new Blob([imageData as BlobPart]);
         const reader = new FileReader();
         reader.onloadend = () => {
           setImageSrc(reader.result as string);
+          setImageLoading(false);
+        };
+        reader.onerror = () => {
+          console.error('Failed to read image file');
+          setImageError(true);
+          setImageLoading(false);
         };
         reader.readAsDataURL(blob);
-        setImageError(false);
         setTransformedImageData(null);
         setHasUnsavedChanges(false);
         setDisplayFileName(file.name);
         setCurrentFilePath(file.path);
+        setIsCropping(false);
         
         // Clean up any existing temp file
         if (tempFilePath) {
@@ -98,6 +123,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       } catch (error) {
         console.error('Failed to load image:', error);
         setImageError(true);
+        setImageLoading(false);
       }
     };
 
@@ -284,6 +310,91 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     }
   };
 
+  const handleCrop = async () => {
+    const imageElement = cropperRef?.current;
+    const cropper = (imageElement as any)?.cropper;
+
+    if (!cropper || !metadata) return;
+
+    try {
+      setProcessing(true);
+      showToast('Cropping image...');
+
+      // Get crop data from cropper.js
+      const cropData = cropper.getData(true); // true = rounded values
+      const imageData = cropper.getImageData();
+
+      // Calculate actual pixel coordinates
+      const scaleX = imageData.naturalWidth / imageData.width;
+      const scaleY = imageData.naturalHeight / imageData.height;
+
+      const cropX = Math.round(cropData.x * scaleX);
+      const cropY = Math.round(cropData.y * scaleY);
+      const cropWidth = Math.round(cropData.width * scaleX);
+      const cropHeight = Math.round(cropData.height * scaleY);
+
+      const inputPath = currentWorkingPath || currentFilePath;
+      const imageBytes = await invoke<number[]>('crop_image_preview', {
+        inputPath,
+        crop: {
+          x: cropX,
+          y: cropY,
+          width: cropWidth,
+          height: cropHeight,
+        },
+      });
+
+      const uint8Array = new Uint8Array(imageBytes);
+      setTransformedImageData(uint8Array);
+      
+      // Save to temp file for next transformation
+      const dataDir = await appDataDir();
+      
+      try {
+        await createDir(dataDir, { recursive: true });
+      } catch (e) {
+        // Directory might already exist, ignore
+      }
+      
+      const tempPath = await join(dataDir, `temp_transform_${Date.now()}.png`);
+      
+      if (tempFilePath && tempFilePath !== currentFilePath) {
+        try {
+          await removeFile(tempFilePath);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      
+      await writeBinaryFile(tempPath, uint8Array);
+      setTempFilePath(tempPath);
+      setCurrentWorkingPath(tempPath);
+      
+      const blob = new Blob([uint8Array.buffer]);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageSrc(reader.result as string);
+      };
+      reader.readAsDataURL(blob);
+      
+      setHasUnsavedChanges(true);
+      setIsCropping(false);
+      showToast('Image cropped');
+    } catch (error) {
+      showToast(`Error: ${error}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const cancelCrop = () => {
+    setIsCropping(false);
+  };
+
+  const initializeCrop = () => {
+    setIsCropping(true);
+  };
+
   const handleSave = async (overwriteOriginal: boolean = false) => {
     if (!transformedImageData) return;
 
@@ -460,6 +571,53 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
+  // Flatten metadata into key-value pairs - dynamically include all available
+  const getMetadataEntries = (): Array<{ key: string; value: string }> => {
+    if (!metadata) return [];
+    
+    const entries: Array<{ key: string; value: string }> = [];
+    
+    // Basic metadata
+    entries.push({ key: 'Width', value: `${metadata.width}px` });
+    entries.push({ key: 'Height', value: `${metadata.height}px` });
+    entries.push({ key: 'Format', value: metadata.format });
+    entries.push({ key: 'Color Type', value: metadata.color_type });
+    if (metadata.bit_depth) entries.push({ key: 'Bit Depth', value: metadata.bit_depth });
+    entries.push({ key: 'Has Alpha', value: metadata.has_alpha ? 'Yes' : 'No' });
+    entries.push({ key: 'File Size', value: formatFileSize(metadata.file_size) });
+    if (metadata.file_created) entries.push({ key: 'Created', value: metadata.file_created });
+    if (metadata.file_modified) entries.push({ key: 'Modified', value: metadata.file_modified });
+    
+    // All EXIF, IPTC, XMP data dynamically
+    Object.entries(metadata.exif).forEach(([key, value]) => entries.push({ key: `EXIF: ${key}`, value }));
+    Object.entries(metadata.iptc).forEach(([key, value]) => entries.push({ key: `IPTC: ${key}`, value }));
+    Object.entries(metadata.xmp).forEach(([key, value]) => entries.push({ key: `XMP: ${key}`, value }));
+    
+    return entries;
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const handleOpenMetadataDetail = async () => {
+    const entries = getMetadataEntries();
+    if (entries.length <= 6) return;
+    
+    try {
+      await invoke('open_metadata_window', {
+        metadata: entries,
+        windowTitle: `Metadata - ${displayFileName}`,
+      });
+    } catch (error) {
+      console.error('Failed to open metadata window:', error);
+      showToast(`Error opening metadata window: ${error}`);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -537,11 +695,92 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
 
       <div className="flex-1 flex gap-6 min-h-0 items-start">
         {/* Preview */}
-        <div className="flex-1 rounded-3xl p-6 flex items-start justify-center overflow-hidden min-w-0">
-          {imageError ? (
+        <div className="flex-1 rounded-3xl p-6 flex items-center justify-center min-w-0 relative" style={{ overflow: isCropping ? 'visible' : 'hidden' }}>
+          {imageLoading ? (
+            <div className="text-white/60 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/60 mx-auto mb-2"></div>
+              <p className="text-sm">Loading image...</p>
+            </div>
+          ) : imageError ? (
             <div className="text-white/60 text-center">
               <p className="text-sm mb-2">Failed to load image</p>
               <p className="text-xs text-white/40">{file.path}</p>
+            </div>
+          ) : isCropping ? (
+            <div className="flex flex-col items-center justify-center w-full max-w-full max-h-full gap-4">
+              <div className="relative w-full max-w-full max-h-full flex items-center justify-center">
+                <Cropper
+                  ref={cropperRef}
+                  src={imageSrc}
+                  style={{ height: '100%', width: '100%' }}
+                  aspectRatio={NaN}
+                  guides={true}
+                  viewMode={1}
+                  minCropBoxHeight={20}
+                  minCropBoxWidth={20}
+                  background={false}
+                  responsive={true}
+                  autoCropArea={0.8}
+                  checkOrientation={false}
+                  modal={false}
+                  ready={() => {
+                    const imageElement = cropperRef?.current;
+                    const cropper = (imageElement as any)?.cropper;
+                    if (cropper) {
+                      const imageData = cropper.getImageData();
+                      
+                      // Calculate minimum canvas size to prevent zooming out beyond image
+                      const minCanvasWidth = imageData.naturalWidth;
+                      const minCanvasHeight = imageData.naturalHeight;
+                      
+                      // Set minimum canvas dimensions
+                      cropper.setCanvasData({
+                        minWidth: minCanvasWidth,
+                        minHeight: minCanvasHeight,
+                      });
+                    }
+                  }}
+                  zoom={(event) => {
+                    const imageElement = cropperRef?.current;
+                    const cropper = (imageElement as any)?.cropper;
+                    if (cropper && event.detail.ratio !== undefined) {
+                      const imageData = cropper.getImageData();
+                      const containerData = cropper.getContainerData();
+                      
+                      // Calculate minimum zoom ratio to fit image in container
+                      const minZoomRatio = Math.min(
+                        containerData.width / imageData.naturalWidth,
+                        containerData.height / imageData.naturalHeight
+                      );
+                      
+                      // Prevent zooming out beyond minimum
+                      if (event.detail.ratio < minZoomRatio) {
+                        event.preventDefault();
+                        cropper.zoomTo(minZoomRatio);
+                      }
+                    }
+                  }}
+                />
+              </div>
+              {/* Crop action buttons - below the image */}
+              <div className="flex gap-2 pointer-events-auto">
+                <button
+                  onClick={handleCrop}
+                  disabled={processing}
+                  className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105 bg-green-500/30 shadow-lg"
+                  title="Apply Crop"
+                >
+                  <Check className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={cancelCrop}
+                  disabled={processing}
+                  className="glass-card p-2 rounded-lg text-white transition-all duration-300 disabled:opacity-50 hover:scale-105 shadow-lg"
+                  title="Cancel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           ) : (
             <img
@@ -552,9 +791,6 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                 console.error('Image load error:', e);
                 console.error('Failed src:', imageSrc);
                 setImageError(true);
-              }}
-              onLoad={() => {
-                console.log('Image loaded successfully');
               }}
             />
           )}
@@ -649,7 +885,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                     270°
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 mb-3">
                   <button
                     onClick={() => handleFlip('horizontal')}
                     disabled={processing}
@@ -667,6 +903,14 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                     Flip V
                   </button>
                 </div>
+                <button
+                  onClick={initializeCrop}
+                  disabled={processing || isCropping}
+                  className="w-full glass-card px-4 py-3 rounded-2xl text-white text-sm transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <Scissors className="w-4 h-4" />
+                  Crop Image
+                </button>
               </div>
             )}
           </div>
@@ -725,26 +969,37 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
 
             {expandedCard === 'privacy-metadata' && (
               <div className="mt-4 space-y-4">
-                {metadata && (
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-white/60">Width:</span>
-                      <span className="text-white">{metadata.width}px</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/60">Height:</span>
-                      <span className="text-white">{metadata.height}px</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/60">Format:</span>
-                      <span className="text-white">{metadata.format}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-white/60">Color:</span>
-                      <span className="text-white">{metadata.color_type}</span>
-                    </div>
-                  </div>
-                )}
+                {metadata && (() => {
+                  const entries = getMetadataEntries();
+                  const displayEntries = entries.slice(0, 6);
+                  const hasMore = entries.length > 6;
+                  
+                  return (
+                    <>
+                      <div className="space-y-2 text-sm">
+                        {displayEntries.map((entry, idx) => (
+                          <div key={idx} className="flex justify-between">
+                            <span className="text-white/60">{entry.key}:</span>
+                            <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
+                              {entry.value}
+                            </span>
+                          </div>
+                        ))}
+                        {hasMore && (
+                          <div className="pt-2 border-t border-white/10">
+                            <button
+                              onClick={handleOpenMetadataDetail}
+                              className="w-full glass-card px-3 py-2 rounded-xl text-white/80 text-xs transition-all duration-300 hover:text-white hover:scale-105 flex items-center justify-center gap-2"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              View All {entries.length} Properties
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
                 <button
                   onClick={handleStripMetadata}
                   disabled={processing}
@@ -769,6 +1024,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
           )}
         </div>
       </div>
+
     </div>
   );
 }

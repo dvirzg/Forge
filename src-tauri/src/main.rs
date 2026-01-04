@@ -19,8 +19,13 @@ pub fn apply_window_vibrancy<R: Runtime>(window: &Window<R>) {
     .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
 }
 
+use commands::window::MetadataStore;
+use std::sync::Mutex;
+use serde_json::Value;
+
 fn main() {
     tauri::Builder::default()
+        .manage(MetadataStore(Mutex::new(None)))
         .setup(|app| {
             let window = app.get_window("main").unwrap();
 
@@ -44,6 +49,7 @@ fn main() {
             commands::image::flip_image,
             commands::image::convert_image,
             commands::image::get_image_metadata,
+            commands::image::strip_metadata_preview,
             commands::image::strip_metadata,
             commands::image::crop_image_preview,
             commands::image::crop_image,
@@ -61,6 +67,7 @@ fn main() {
             commands::text::replace_all_text,
             commands::text::get_text_metadata,
             commands::window::open_metadata_window,
+            commands::window::get_metadata,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

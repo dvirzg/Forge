@@ -289,6 +289,26 @@ pub async fn get_image_metadata(input_path: String) -> Result<ImageMetadata, Str
 }
 
 #[tauri::command]
+pub async fn strip_metadata_preview(input_path: String) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || {
+        let img = image::open(&input_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        // Re-encode the image to strip metadata
+        let mut buffer = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut buffer);
+            img.write_to(&mut cursor, ImageFormat::Png)
+                .map_err(|e| format!("Failed to encode image: {}", e))?;
+        }
+
+        Ok::<Vec<u8>, String>(buffer)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
 pub async fn strip_metadata(input_path: String, output_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let img = image::open(&input_path)

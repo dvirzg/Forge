@@ -84,6 +84,8 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const [currentFilePath, setCurrentFilePath] = useState<string>(file.path);
   const [isCropping, setIsCropping] = useState(false);
   const cropperRef = useRef<HTMLImageElement>(null);
+  const [isEditingCustomFormat, setIsEditingCustomFormat] = useState(false);
+  const [customFormat, setCustomFormat] = useState('');
 
   // Load image as base64
   useEffect(() => {
@@ -532,11 +534,33 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         format,
       });
 
-      showToast(result);
+      showToast(`Converted to ${format.toUpperCase()} successfully`);
     } catch (error) {
-      showToast(`Error: ${error}`);
+      const errorMsg = String(error);
+      if (errorMsg.includes('Unsupported format') || errorMsg.includes('incompatible')) {
+        showToast(`Incompatible format: ${format.toUpperCase()}`);
+      } else {
+        showToast(`Error: ${error}`);
+      }
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handleCustomFormatSubmit = async () => {
+    if (!customFormat.trim()) {
+      setIsEditingCustomFormat(false);
+      return;
+    }
+
+    const format = customFormat.trim().toLowerCase();
+    setIsEditingCustomFormat(false);
+    setCustomFormat('');
+    
+    try {
+      await handleConvert(format);
+    } catch (error) {
+      // Error handling is done in handleConvert
     }
   };
 
@@ -545,21 +569,54 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
       setProcessing(true);
       showToast('Stripping metadata...');
 
-      const outputPath = await save({
-        defaultPath: file.name.replace(/\.[^/.]+$/, '_no_metadata.png'),
-        filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+      const inputPath = currentWorkingPath || currentFilePath;
+      const imageBytes = await invoke<number[]>('strip_metadata_preview', {
+        inputPath,
       });
 
-      if (!outputPath) {
-        return;
+      const uint8Array = new Uint8Array(imageBytes);
+      setTransformedImageData(uint8Array);
+      
+      // Save to temp file for next transformation
+      const dataDir = await appDataDir();
+      
+      try {
+        await createDir(dataDir, { recursive: true });
+      } catch (e) {
+        // Directory might already exist, ignore
       }
-
-      const result = await invoke<string>('strip_metadata', {
-        inputPath: currentFilePath,
-        outputPath,
+      
+      const tempPath = await join(dataDir, `temp_strip_metadata_${Date.now()}.png`);
+      
+      // Clean up old temp file if it exists
+      if (tempFilePath && tempFilePath !== currentFilePath) {
+        try {
+          await removeFile(tempFilePath);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      
+      await writeBinaryFile(tempPath, uint8Array);
+      setTempFilePath(tempPath);
+      setCurrentWorkingPath(tempPath);
+      
+      // Update preview
+      const blob = new Blob([uint8Array.buffer]);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageSrc(reader.result as string);
+      };
+      reader.readAsDataURL(blob);
+      
+      // Update metadata to show stripped version
+      const strippedMetadata = await invoke<ImageMetadata>('get_image_metadata', {
+        inputPath: tempPath,
       });
-
-      showToast(result);
+      setMetadata(strippedMetadata);
+      
+      setHasUnsavedChanges(true);
+      showToast('Metadata stripped');
     } catch (error) {
       showToast(`Error: ${error}`);
     } finally {
@@ -571,13 +628,10 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     setExpandedCard(expandedCard === cardId ? null : cardId);
   };
 
-  // Flatten metadata into key-value pairs - dynamically include all available
-  const getMetadataEntries = (): Array<{ key: string; value: string }> => {
+  const getBasicMetadataEntries = (): Array<{ key: string; value: string }> => {
     if (!metadata) return [];
     
     const entries: Array<{ key: string; value: string }> = [];
-    
-    // Basic metadata
     entries.push({ key: 'Width', value: `${metadata.width}px` });
     entries.push({ key: 'Height', value: `${metadata.height}px` });
     entries.push({ key: 'Format', value: metadata.format });
@@ -588,12 +642,25 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     if (metadata.file_created) entries.push({ key: 'Created', value: metadata.file_created });
     if (metadata.file_modified) entries.push({ key: 'Modified', value: metadata.file_modified });
     
-    // All EXIF, IPTC, XMP data dynamically
+    return entries;
+  };
+
+  const getAllMetadataEntries = (): Array<{ key: string; value: string }> => {
+    if (!metadata) return [];
+    
+    const entries = getBasicMetadataEntries();
     Object.entries(metadata.exif).forEach(([key, value]) => entries.push({ key: `EXIF: ${key}`, value }));
     Object.entries(metadata.iptc).forEach(([key, value]) => entries.push({ key: `IPTC: ${key}`, value }));
     Object.entries(metadata.xmp).forEach(([key, value]) => entries.push({ key: `XMP: ${key}`, value }));
     
     return entries;
+  };
+
+  const hasExtendedMetadata = (): boolean => {
+    if (!metadata) return false;
+    return Object.keys(metadata.exif).length > 0 || 
+           Object.keys(metadata.iptc).length > 0 || 
+           Object.keys(metadata.xmp).length > 0;
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -604,8 +671,8 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   };
 
   const handleOpenMetadataDetail = async () => {
-    const entries = getMetadataEntries();
-    if (entries.length <= 6) return;
+    const entries = getAllMetadataEntries();
+    if (entries.length === 0) return;
     
     try {
       await invoke('open_metadata_window', {
@@ -935,7 +1002,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
             {expandedCard === 'convert' && (
               <div className="mt-4">
                 <div className="grid grid-cols-3 gap-2">
-                  {['png', 'jpg', 'webp', 'gif', 'bmp', 'ico'].map((format) => (
+                  {['png', 'jpg', 'webp', 'gif', 'bmp'].map((format) => (
                     <button
                       key={format}
                       onClick={() => handleConvert(format)}
@@ -945,6 +1012,33 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                       {format}
                     </button>
                   ))}
+                  {isEditingCustomFormat ? (
+                    <input
+                      type="text"
+                      value={customFormat}
+                      onChange={(e) => setCustomFormat(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleCustomFormatSubmit();
+                        } else if (e.key === 'Escape') {
+                          setIsEditingCustomFormat(false);
+                          setCustomFormat('');
+                        }
+                      }}
+                      onBlur={handleCustomFormatSubmit}
+                      className="glass-card px-3 py-2 rounded-xl text-white text-xs bg-transparent border border-white/20 focus:border-white/40 focus:outline-none uppercase"
+                      placeholder="EXT"
+                      autoFocus
+                    />
+                  ) : (
+                    <button
+                      onClick={() => setIsEditingCustomFormat(true)}
+                      disabled={processing}
+                      className="glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
+                    >
+                      Other
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -968,45 +1062,37 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
             </button>
 
             {expandedCard === 'privacy-metadata' && (
-              <div className="mt-4 space-y-4">
-                {metadata && (() => {
-                  const entries = getMetadataEntries();
-                  const displayEntries = entries.slice(0, 6);
-                  const hasMore = entries.length > 6;
-                  
-                  return (
-                    <>
-                      <div className="space-y-2 text-sm">
-                        {displayEntries.map((entry, idx) => (
-                          <div key={idx} className="flex justify-between">
-                            <span className="text-white/60">{entry.key}:</span>
-                            <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
-                              {entry.value}
-                            </span>
-                          </div>
-                        ))}
-                        {hasMore && (
-                          <div className="pt-2 border-t border-white/10">
-                            <button
-                              onClick={handleOpenMetadataDetail}
-                              className="w-full glass-card px-3 py-2 rounded-xl text-white/80 text-xs transition-all duration-300 hover:text-white hover:scale-105 flex items-center justify-center gap-2"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              View All {entries.length} Properties
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
-                <button
-                  onClick={handleStripMetadata}
-                  disabled={processing}
-                  className="w-full glass-card px-4 py-3 rounded-2xl text-white text-sm transition-all duration-300 disabled:opacity-50"
-                >
-                  Strip Metadata
-                </button>
+              <div className="mt-4 space-y-3">
+                {metadata && (
+                  <>
+                    <div className="space-y-1 text-xs">
+                      {getBasicMetadataEntries().map((entry: { key: string; value: string }, idx: number) => (
+                        <div key={idx} className="flex justify-between">
+                          <span className="text-white/60">{entry.key}:</span>
+                          <span className="text-white text-right max-w-[60%] truncate" title={entry.value}>
+                            {entry.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {hasExtendedMetadata() && (
+                      <button
+                        onClick={handleOpenMetadataDetail}
+                        className="w-full glass-card px-3 py-2 rounded-xl text-white/80 text-xs transition-all duration-300 hover:text-white hover:scale-105 flex items-center justify-center gap-2"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        View Extended Metadata
+                      </button>
+                    )}
+                    <button
+                      onClick={handleStripMetadata}
+                      disabled={processing}
+                      className="w-full glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50"
+                    >
+                      Strip Metadata
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1014,7 +1100,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
           {/* Toast Notification */}
           {toast && (
             <div 
-              className="fixed bottom-6 right-6 z-50 transition-all duration-300 animate-in fade-in slide-in-from-bottom-2"
+              className="fixed bottom-6 left-6 z-50 transition-all duration-300 animate-in fade-in slide-in-from-bottom-2"
               key={toast.id}
             >
               <div className="glass-card rounded-xl px-4 py-2 shadow-lg">

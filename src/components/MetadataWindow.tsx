@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/tauri';
 import { appWindow } from '@tauri-apps/api/window';
 import { X } from 'lucide-react';
 
@@ -14,13 +14,9 @@ function MetadataWindow() {
   const [titleBarClicked, setTitleBarClicked] = useState(false);
 
   useEffect(() => {
-    const unlisten = listen<MetadataEntry[]>('metadata-update', (event) => {
-      setMetadata(event.payload);
-    });
-
-    return () => {
-      unlisten.then(fn => fn());
-    };
+    invoke<MetadataEntry[]>('get_metadata')
+      .then(data => setMetadata(data))
+      .catch(console.error);
   }, []);
 
   // Split metadata into two columns
@@ -69,26 +65,32 @@ function MetadataWindow() {
       <div className="absolute top-10 left-0 right-0 bottom-0 z-10 overflow-y-auto px-4 py-4">
         <div className="space-y-3">
           <h3 className="text-lg font-bold text-white mb-3">Metadata Details</h3>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-            {/* Left Column */}
-            <div className="space-y-1.5">
-              {leftColumn.map((entry, idx) => (
-                <div key={idx} className="flex flex-col py-0.5">
-                  <span className="text-white/60 text-[10px] font-medium mb-0.5">{entry.key}:</span>
-                  <span className="text-white text-[11px] break-words leading-relaxed">{entry.value}</span>
-                </div>
-              ))}
+          {metadata.length === 0 ? (
+            <div className="text-white/40 text-sm text-center py-8">
+              Loading metadata...
             </div>
-            {/* Right Column */}
-            <div className="space-y-1.5">
-              {rightColumn.map((entry, idx) => (
-                <div key={idx} className="flex flex-col py-0.5">
-                  <span className="text-white/60 text-[10px] font-medium mb-0.5">{entry.key}:</span>
-                  <span className="text-white text-[11px] break-words leading-relaxed">{entry.value}</span>
-                </div>
-              ))}
+          ) : (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {/* Left Column */}
+              <div className="space-y-1.5">
+                {leftColumn.map((entry, idx) => (
+                  <div key={idx} className="flex flex-col py-0.5">
+                    <span className="text-white/60 text-[10px] font-medium mb-0.5">{entry.key}:</span>
+                    <span className="text-white text-[11px] break-words leading-relaxed">{entry.value}</span>
+                  </div>
+                ))}
+              </div>
+              {/* Right Column */}
+              <div className="space-y-1.5">
+                {rightColumn.map((entry, idx) => (
+                  <div key={idx} className="flex flex-col py-0.5">
+                    <span className="text-white/60 text-[10px] font-medium mb-0.5">{entry.key}:</span>
+                    <span className="text-white text-[11px] break-words leading-relaxed">{entry.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

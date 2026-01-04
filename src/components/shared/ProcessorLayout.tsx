@@ -19,13 +19,13 @@ export function ProcessorLayout({
   sidebarWidth = 'default',
   expandedCard = null,
 }: ProcessorLayoutProps) {
-  const sidebarClass = sidebarWidth === 'large' ? 'w-80' : 'w-72';
+  const sidebarClass = sidebarWidth === 'large' ? 'w-64' : 'w-56';
 
   if (layout === 'grid-2') {
     return (
-      <div className="flex-1 grid grid-cols-2 gap-6 overflow-hidden">
+      <div className="flex-1 grid grid-cols-2 gap-4 overflow-hidden">
         <div className="flex items-center justify-center">{preview}</div>
-        <div className="py-6 px-4 overflow-x-visible">
+        <div className="pt-6 pb-3 px-4 overflow-x-visible">
           <ToolsContainer expandedCard={expandedCard}>
             {sidebar}
           </ToolsContainer>
@@ -36,9 +36,9 @@ export function ProcessorLayout({
 
   if (layout === 'grid-3') {
     return (
-      <div className="flex-1 grid grid-cols-3 gap-6 overflow-hidden">
+      <div className="flex-1 grid grid-cols-3 gap-4 overflow-hidden">
         <div className="col-span-2">{preview}</div>
-        <div className="py-6 px-4 overflow-x-visible">
+        <div className="pt-6 pb-3 px-4 overflow-x-visible">
           <ToolsContainer expandedCard={expandedCard}>
             {sidebar}
           </ToolsContainer>
@@ -49,9 +49,9 @@ export function ProcessorLayout({
 
   // Default flex layout
   return (
-    <div className="flex-1 flex gap-6 min-h-0">
+    <div className="flex-1 flex gap-4 min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">{preview}</div>
-      <div className={`${sidebarClass} flex-shrink-0 py-6 px-4 overflow-x-visible`}>
+      <div className={`${sidebarClass} flex-shrink-0 pt-6 pb-3 px-4 overflow-x-visible`}>
         <ToolsContainer expandedCard={expandedCard}>
           {sidebar}
         </ToolsContainer>

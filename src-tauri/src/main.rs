@@ -19,13 +19,14 @@ pub fn apply_window_vibrancy<R: Runtime>(window: &Window<R>) {
     .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
 }
 
-use commands::window::MetadataStore;
+use commands::window::{MetadataStore, PdfStore};
 use std::sync::Mutex;
 use serde_json::Value;
 
 fn main() {
     tauri::Builder::default()
         .manage(MetadataStore(Mutex::new(None)))
+        .manage(PdfStore(Mutex::new(None)))
         .setup(|app| {
             let window = app.get_window("main").unwrap();
 
@@ -68,6 +69,9 @@ fn main() {
             commands::text::get_text_metadata,
             commands::window::open_metadata_window,
             commands::window::get_metadata,
+            commands::window::open_pdf_window,
+            commands::window::get_pdf_data,
+            commands::window::update_pdf_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

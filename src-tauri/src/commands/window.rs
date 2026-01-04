@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use serde_json::Value;
 
 pub struct MetadataStore(pub Mutex<Option<Value>>);
+pub struct PdfStore(pub Mutex<Option<Value>>);
 
 #[tauri::command]
 pub fn open_metadata_window(
@@ -68,4 +69,88 @@ pub fn get_metadata(state: State<'_, MetadataStore>) -> Result<serde_json::Value
         .unwrap()
         .clone()
         .ok_or_else(|| "No metadata available".to_string())
+}
+
+#[tauri::command]
+pub fn open_pdf_window(
+    app: tauri::AppHandle,
+    pdf_data: serde_json::Value,
+    window_title: String,
+    state: State<'_, PdfStore>,
+) -> Result<(), String> {
+    *state.0.lock().unwrap() = Some(pdf_data);
+    
+    let window = app.get_window("pdf_viewer");
+    
+    if let Some(existing_window) = window {
+        existing_window.show().map_err(|e| e.to_string())?;
+        existing_window.set_focus().map_err(|e| e.to_string())?;
+        // Emit update event to existing window
+        if let Some(data) = state.0.lock().unwrap().as_ref() {
+            existing_window.emit("pdf-update", data).map_err(|e| e.to_string())?;
+        }
+    } else {
+        let main_window = app.get_window("main").ok_or("Main window not found")?;
+        let scale_factor = main_window.scale_factor().unwrap_or(1.0);
+        let main_position = main_window.outer_position().map_err(|e| e.to_string())?;
+        let main_size = main_window.outer_size().map_err(|e| e.to_string())?;
+        
+        let x = (main_position.x as f64 / scale_factor) + (main_size.width as f64 / scale_factor) + 20.0;
+        let y = main_position.y as f64 / scale_factor;
+        
+        let new_window = tauri::WindowBuilder::new(
+            &app,
+            "pdf_viewer",
+            tauri::WindowUrl::App("pdf-viewer.html".into())
+        )
+        .title(&window_title)
+        .inner_size(800.0, 1000.0)
+        .position(x, y)
+        .transparent(true)
+        .decorations(false)
+        .resizable(true)
+        .min_inner_size(400.0, 400.0)
+        .skip_taskbar(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+        
+        new_window.show().map_err(|e| e.to_string())?;
+        
+        #[cfg(target_os = "macos")]
+        {
+            apply_vibrancy(
+                &new_window,
+                NSVisualEffectMaterial::Popover,
+                Some(NSVisualEffectState::Active),
+                Some(20.0)
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_pdf_data(state: State<'_, PdfStore>) -> Result<serde_json::Value, String> {
+    state.0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "No PDF data available".to_string())
+}
+
+#[tauri::command]
+pub fn update_pdf_window(
+    app: tauri::AppHandle,
+    pdf_data: serde_json::Value,
+    state: State<'_, PdfStore>,
+) -> Result<(), String> {
+    *state.0.lock().unwrap() = Some(pdf_data.clone());
+    
+    if let Some(window) = app.get_window("pdf_viewer") {
+        window.emit("pdf-update", &pdf_data).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
 }

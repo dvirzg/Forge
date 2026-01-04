@@ -21,7 +21,6 @@ pub fn apply_window_vibrancy<R: Runtime>(window: &Window<R>) {
 
 use commands::window::{MetadataStore, PdfStore};
 use std::sync::Mutex;
-use serde_json::Value;
 
 fn main() {
     tauri::Builder::default()
@@ -29,6 +28,12 @@ fn main() {
         .manage(PdfStore(Mutex::new(None)))
         .setup(|app| {
             let window = app.get_window("main").unwrap();
+
+            // Set window size to ensure proper dimensions for PDF viewing
+            let _ = window.set_size(tauri::LogicalSize {
+                width: 1200.0,
+                height: 1000.0,
+            });
 
             // Apply vibrancy for frosted glass effect
             apply_window_vibrancy(&window);
@@ -54,16 +59,23 @@ fn main() {
             commands::image::strip_metadata,
             commands::image::crop_image_preview,
             commands::image::crop_image,
+            commands::image::compress_image,
+            commands::image::estimate_compressed_size,
             commands::pdf::merge_pdfs,
+            commands::pdf::merge_pdfs_with_pages,
             commands::pdf::rotate_pdf,
             commands::pdf::extract_text,
             commands::pdf::extract_images,
             commands::pdf::get_pdf_metadata,
+            commands::pdf::compress_pdf,
+            commands::pdf::estimate_pdf_compressed_size,
             commands::video::trim_video,
             commands::video::strip_audio,
             commands::video::scale_video,
             commands::video::video_to_gif,
             commands::video::get_video_metadata,
+            commands::video::compress_video,
+            commands::video::estimate_video_compressed_size,
             commands::text::convert_case,
             commands::text::replace_all_text,
             commands::text::get_text_metadata,

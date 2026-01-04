@@ -21,6 +21,12 @@ pub struct PdfMetadata {
     all_metadata: HashMap<String, String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PageSelection {
+    pdf_path: String,
+    page_numbers: Vec<u32>,
+}
+
 #[tauri::command]
 pub async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
@@ -51,6 +57,38 @@ pub async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result
             .map_err(|e| format!("Failed to save merged PDF: {}", e))?;
 
         Ok::<String, String>("PDFs merged successfully".to_string())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn merge_pdfs_with_pages(
+    page_selections: Vec<PageSelection>,
+    output_path: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut merged_doc = Document::with_version("1.5");
+
+        for selection in page_selections {
+            let doc = Document::load(&selection.pdf_path)
+                .map_err(|e| format!("Failed to load PDF {}: {}", selection.pdf_path, e))?;
+
+            let all_pages = doc.get_pages();
+
+            for page_num in selection.page_numbers {
+                if let Some((_, page_id)) = all_pages.iter().find(|(num, _)| **num == page_num) {
+                    let page_object = doc.get_object(*page_id)
+                        .map_err(|e| format!("Failed to get page object: {}", e))?;
+                    merged_doc.add_object(page_object.clone());
+                }
+            }
+        }
+
+        merged_doc.save(&output_path)
+            .map_err(|e| format!("Failed to save merged PDF: {}", e))?;
+
+        Ok::<String, String>("PDFs merged successfully with page selection".to_string())
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -167,7 +205,7 @@ pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String>
         let file_metadata = std::fs::metadata(&input_path)
             .map_err(|e| format!("Failed to get file metadata: {}", e))?;
         let file_size = file_metadata.len();
-        
+
         let file_created = file_metadata.created()
             .ok()
             .map(|t| {
@@ -175,7 +213,7 @@ pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String>
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string()
             });
-        
+
         let file_modified = file_metadata.modified()
             .ok()
             .map(|t| {
@@ -214,6 +252,107 @@ pub async fn get_pdf_metadata(input_path: String) -> Result<PdfMetadata, String>
             file_modified,
             all_metadata: pdf_metadata,
         })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PdfCompressionResult {
+    output_path: String,
+    file_size: u64,
+}
+
+fn get_ghostscript_settings(level: u8) -> &'static str {
+    match level {
+        0 => "/default",      // Lossless - default quality
+        1 => "/prepress",     // Near Lossless - high quality for prepress
+        2 => "/printer",      // High Quality - printer quality
+        3 => "/ebook",        // Medium Quality - ebook (150 DPI)
+        4 => "/screen",       // Low Quality - screen viewing (72 DPI)
+        _ => "/printer",
+    }
+}
+
+#[tauri::command]
+pub async fn compress_pdf(
+    input_path: String,
+    quality_level: u8,
+) -> Result<PdfCompressionResult, String> {
+    tokio::task::spawn_blocking(move || {
+        use std::process::Command;
+
+        // Create output path
+        let input_path_obj = std::path::Path::new(&input_path);
+        let stem = input_path_obj.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("compressed");
+        let parent = input_path_obj.parent()
+            .map(|p| p.to_str().unwrap_or(""))
+            .unwrap_or("");
+
+        let output_path = format!("{}/{}_compressed.pdf", parent, stem);
+
+        let pdf_settings = get_ghostscript_settings(quality_level);
+
+        // Use ghostscript for PDF compression
+        let output = Command::new("gs")
+            .args(&[
+                "-sDEVICE=pdfwrite",
+                "-dCompatibilityLevel=1.4",
+                &format!("-dPDFSETTINGS={}", pdf_settings),
+                "-dNOPAUSE",
+                "-dQUIET",
+                "-dBATCH",
+                &format!("-sOutputFile={}", output_path),
+                &input_path,
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run ghostscript. Is it installed? Error: {}", e))?;
+
+        if !output.status.success() {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Ghostscript compression failed: {}", error_msg));
+        }
+
+        // Get output file size
+        let file_size = std::fs::metadata(&output_path)
+            .map_err(|e| format!("Failed to get output file size: {}", e))?
+            .len();
+
+        Ok::<PdfCompressionResult, String>(PdfCompressionResult {
+            output_path,
+            file_size,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn estimate_pdf_compressed_size(
+    input_path: String,
+    quality_level: u8,
+) -> Result<u64, String> {
+    tokio::task::spawn_blocking(move || {
+        // Get original file size
+        let original_size = std::fs::metadata(&input_path)
+            .map_err(|e| format!("Failed to get file size: {}", e))?
+            .len();
+
+        // Use heuristic reduction factors based on quality level
+        let reduction_factor = match quality_level {
+            0 => 0.95,  // Lossless - minimal compression (5%)
+            1 => 0.70,  // Near Lossless - moderate compression (30%)
+            2 => 0.50,  // High Quality - good compression (50%)
+            3 => 0.30,  // Medium Quality - significant compression (70%)
+            4 => 0.15,  // Low Quality - aggressive compression (85%)
+            _ => 0.50,
+        };
+
+        let estimated_size = (original_size as f64 * reduction_factor) as u64;
+
+        Ok::<u64, String>(estimated_size)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

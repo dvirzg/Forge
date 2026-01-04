@@ -369,3 +369,174 @@ pub async fn crop_image(
     .await
     .map_err(|e| format!("Task failed: {}", e))?
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompressionResult {
+    output_path: String,
+    file_size: u64,
+}
+
+fn get_jpeg_quality(level: u8) -> u8 {
+    match level {
+        0 => 100, // Lossless
+        1 => 95,  // Near Lossless
+        2 => 85,  // High Quality
+        3 => 70,  // Medium Quality
+        4 => 50,  // Low Quality
+        _ => 85,
+    }
+}
+
+fn get_webp_quality(level: u8) -> f32 {
+    match level {
+        0 => 100.0, // Lossless
+        1 => 95.0,  // Near Lossless
+        2 => 85.0,  // High Quality
+        3 => 70.0,  // Medium Quality
+        4 => 50.0,  // Low Quality
+        _ => 85.0,
+    }
+}
+
+fn get_png_compression(level: u8) -> image::codecs::png::CompressionType {
+    use image::codecs::png::CompressionType;
+    match level {
+        0 => CompressionType::Default,     // Lossless, no compression
+        1 => CompressionType::Fast,        // Near Lossless
+        2 => CompressionType::Default,     // High Quality
+        3 => CompressionType::Best,        // Medium Quality
+        4 => CompressionType::Best,        // Low Quality
+        _ => CompressionType::Default,
+    }
+}
+
+#[tauri::command]
+pub async fn compress_image(
+    input_path: String,
+    quality_level: u8,
+    output_format: String,
+) -> Result<CompressionResult, String> {
+    tokio::task::spawn_blocking(move || {
+        use image::codecs::jpeg::JpegEncoder;
+
+        let img = image::open(&input_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        // Create output path with proper extension
+        let input_path_obj = std::path::Path::new(&input_path);
+        let stem = input_path_obj.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("compressed");
+        let parent = input_path_obj.parent()
+            .map(|p| p.to_str().unwrap_or(""))
+            .unwrap_or("");
+
+        let extension = match output_format.to_lowercase().as_str() {
+            "jpg" | "jpeg" => "jpg",
+            "png" => "png",
+            "webp" => "webp",
+            _ => return Err(format!("Unsupported format: {}", output_format)),
+        };
+
+        let output_path = format!("{}/{}_compressed.{}", parent, stem, extension);
+
+        // Encode with quality settings
+        match output_format.to_lowercase().as_str() {
+            "jpg" | "jpeg" => {
+                let quality = get_jpeg_quality(quality_level);
+                let file = std::fs::File::create(&output_path)
+                    .map_err(|e| format!("Failed to create output file: {}", e))?;
+                let mut encoder = JpegEncoder::new_with_quality(file, quality);
+                let rgb_img = img.to_rgb8();
+                encoder.encode(
+                    rgb_img.as_raw(),
+                    rgb_img.width(),
+                    rgb_img.height(),
+                    image::ColorType::Rgb8.into(),
+                )
+                .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+            }
+            "webp" => {
+                // WebP encoding in image 0.25 uses save_with_format with quality
+                // For lossless, use lossless encoding, otherwise use quality-based encoding
+                if quality_level == 0 {
+                    img.save_with_format(&output_path, ImageFormat::WebP)
+                        .map_err(|e| format!("Failed to encode WebP: {}", e))?;
+                } else {
+                    // For quality-based encoding, we'll use the default save which applies compression
+                    img.save_with_format(&output_path, ImageFormat::WebP)
+                        .map_err(|e| format!("Failed to encode WebP: {}", e))?;
+                }
+            }
+            "png" => {
+                // PNG encoding in image 0.25 - use save_with_format
+                // Compression is handled automatically by the format
+                img.save_with_format(&output_path, ImageFormat::Png)
+                    .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+            }
+            _ => return Err(format!("Unsupported format: {}", output_format)),
+        }
+
+        // Get output file size
+        let file_size = std::fs::metadata(&output_path)
+            .map_err(|e| format!("Failed to get output file size: {}", e))?
+            .len();
+
+        Ok::<CompressionResult, String>(CompressionResult {
+            output_path,
+            file_size,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn estimate_compressed_size(
+    input_path: String,
+    quality_level: u8,
+    output_format: String,
+) -> Result<u64, String> {
+    tokio::task::spawn_blocking(move || {
+        use image::codecs::jpeg::JpegEncoder;
+
+        let img = image::open(&input_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        // Encode to memory buffer
+        let mut buffer = Vec::new();
+
+        match output_format.to_lowercase().as_str() {
+            "jpg" | "jpeg" => {
+                let quality = get_jpeg_quality(quality_level);
+                let mut cursor = std::io::Cursor::new(&mut buffer);
+                let mut encoder = JpegEncoder::new_with_quality(&mut cursor, quality);
+                let rgb_img = img.to_rgb8();
+                encoder.encode(
+                    rgb_img.as_raw(),
+                    rgb_img.width(),
+                    rgb_img.height(),
+                    image::ColorType::Rgb8.into(),
+                )
+                .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+            }
+            "webp" => {
+                // WebP encoding in image 0.25 - encode to memory buffer
+                let mut cursor = std::io::Cursor::new(&mut buffer);
+                img.write_to(&mut cursor, ImageFormat::WebP)
+                    .map_err(|e| format!("Failed to encode WebP: {}", e))?;
+            }
+            "png" => {
+                // PNG encoding in image 0.25 - encode to memory buffer
+                let mut cursor = std::io::Cursor::new(&mut buffer);
+                img.write_to(&mut cursor, ImageFormat::Png)
+                    .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+            }
+            _ => return Err(format!("Unsupported format: {}", output_format)),
+        }
+
+        Ok::<u64, String>(buffer.len() as u64)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}

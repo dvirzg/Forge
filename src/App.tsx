@@ -14,6 +14,7 @@ interface DroppedFile {
   path: string;
   name: string;
   type: FileType;
+  multiplePdfs?: Array<{ path: string; name: string }>;
 }
 
 function App() {
@@ -26,7 +27,7 @@ function App() {
     const unlisten = listen('tauri://file-drop', (event: any) => {
       const files = event.payload as string[];
       if (files.length > 0) {
-        handleFileDrop(files[0]);
+        handleFileDrop(files);
       }
     });
 
@@ -115,8 +116,35 @@ function App() {
     resizeWindow();
   }, [droppedFile]);
 
-  const handleFileDrop = useCallback((filePath: string) => {
+  const handleFileDrop = useCallback((filePaths: string | string[]) => {
     setIsDragging(false);
+
+    // Normalize to array
+    const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
+
+    // Filter for PDF files
+    const pdfPaths = paths.filter(path => {
+      const extension = path.split('.').pop()?.toLowerCase();
+      return extension === 'pdf';
+    });
+
+    // Multiple PDFs → merge mode
+    if (pdfPaths.length > 1) {
+      const pdfFiles = pdfPaths.map(path => ({
+        path,
+        name: path.split('/').pop() || '',
+      }));
+      setDroppedFile({
+        path: pdfFiles[0].path,
+        name: `${pdfFiles.length} PDFs`,
+        type: 'pdf',
+        multiplePdfs: pdfFiles,
+      });
+      return;
+    }
+
+    // Single file (PDF or other type)
+    const filePath = paths[0];
     const fileName = filePath.split('/').pop() || '';
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
 
@@ -149,7 +177,7 @@ function App() {
       case 'image':
         return <ImageProcessor file={droppedFile} onReset={handleReset} />;
       case 'pdf':
-        return <PdfProcessor file={droppedFile} onReset={handleReset} />;
+        return <PdfProcessor file={droppedFile} multiplePdfs={droppedFile.multiplePdfs} onReset={handleReset} />;
       case 'video':
         return <VideoProcessor file={droppedFile} onReset={handleReset} />;
       case 'text':

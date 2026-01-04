@@ -182,7 +182,7 @@ pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, Str
         let file_metadata = std::fs::metadata(&input_path)
             .map_err(|e| format!("Failed to get file metadata: {}", e))?;
         let file_size = file_metadata.len();
-        
+
         let file_created = file_metadata.created()
             .ok()
             .map(|t| {
@@ -190,7 +190,7 @@ pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, Str
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string()
             });
-        
+
         let file_modified = file_metadata.modified()
             .ok()
             .map(|t| {
@@ -225,7 +225,7 @@ pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, Str
                                 _ => val.to_string(),
                             }
                         }
-                        
+
                         fn flatten_json(prefix: &str, obj: &serde_json::Value, map: &mut HashMap<String, String>) {
                             match obj {
                                 serde_json::Value::Object(map_obj) => {
@@ -257,7 +257,7 @@ pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, Str
                                 }
                             }
                         }
-                        
+
                         flatten_json("", &json, &mut all_metadata);
                     }
                 }
@@ -270,6 +270,124 @@ pub async fn get_video_metadata(input_path: String) -> Result<VideoMetadata, Str
             file_modified,
             all_metadata,
         })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VideoCompressionResult {
+    output_path: String,
+    file_size: u64,
+}
+
+fn get_crf_value(level: u8) -> u8 {
+    match level {
+        0 => 0,   // Lossless
+        1 => 17,  // Near Lossless (visually identical)
+        2 => 23,  // High Quality (FFmpeg default)
+        3 => 28,  // Medium Quality
+        4 => 35,  // Low Quality
+        _ => 23,
+    }
+}
+
+#[tauri::command]
+pub async fn compress_video(
+    input_path: String,
+    quality_level: u8,
+) -> Result<VideoCompressionResult, String> {
+    tokio::task::spawn_blocking(move || {
+        // Create output path
+        let input_path_obj = std::path::Path::new(&input_path);
+        let stem = input_path_obj.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("compressed");
+        let extension = input_path_obj.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("mp4");
+        let parent = input_path_obj.parent()
+            .map(|p| p.to_str().unwrap_or(""))
+            .unwrap_or("");
+
+        let output_path = format!("{}/{}_compressed.{}", parent, stem, extension);
+
+        let crf = get_crf_value(quality_level);
+        let crf_str = crf.to_string();
+
+        // Use FFmpeg with CRF for quality control
+        let mut args = vec![
+            "-i", &input_path,
+            "-c:v", "libx264",
+            "-crf", &crf_str,
+            "-preset", "medium",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-y",
+            &output_path,
+        ];
+
+        // For lossless, use different settings
+        if quality_level == 0 {
+            args = vec![
+                "-i", &input_path,
+                "-c:v", "libx264",
+                "-preset", "veryslow",
+                "-qp", "0",
+                "-c:a", "copy",
+                "-y",
+                &output_path,
+            ];
+        }
+
+        let output = Command::new("ffmpeg")
+            .args(&args)
+            .output()
+            .map_err(|e| format!("Failed to execute ffmpeg. Is it installed? Error: {}", e))?;
+
+        if !output.status.success() {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("FFmpeg compression failed: {}", error_msg));
+        }
+
+        // Get output file size
+        let file_size = std::fs::metadata(&output_path)
+            .map_err(|e| format!("Failed to get output file size: {}", e))?
+            .len();
+
+        Ok::<VideoCompressionResult, String>(VideoCompressionResult {
+            output_path,
+            file_size,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn estimate_video_compressed_size(
+    input_path: String,
+    quality_level: u8,
+) -> Result<u64, String> {
+    tokio::task::spawn_blocking(move || {
+        // Get original file size
+        let original_size = std::fs::metadata(&input_path)
+            .map_err(|e| format!("Failed to get file size: {}", e))?
+            .len();
+
+        // Use heuristic reduction factors based on CRF quality level
+        let reduction_factor = match quality_level {
+            0 => 1.10,  // Lossless - might be slightly larger
+            1 => 0.80,  // Near Lossless - small compression (20%)
+            2 => 0.50,  // High Quality - moderate compression (50%)
+            3 => 0.30,  // Medium Quality - significant compression (70%)
+            4 => 0.15,  // Low Quality - aggressive compression (85%)
+            _ => 0.50,
+        };
+
+        let estimated_size = (original_size as f64 * reduction_factor) as u64;
+
+        Ok::<u64, String>(estimated_size)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

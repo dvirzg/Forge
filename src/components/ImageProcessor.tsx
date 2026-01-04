@@ -21,8 +21,11 @@ import {
   Scissors,
   Check,
   X,
-  ExternalLink
+  ExternalLink,
+  Gauge
 } from 'lucide-react';
+import { CompressionSlider } from './shared/CompressionSlider';
+import { FileSizeComparison } from './shared/FileSizeComparison';
 
 interface ImageProcessorProps {
   file: {
@@ -86,6 +89,12 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
   const cropperRef = useRef<HTMLImageElement>(null);
   const [isEditingCustomFormat, setIsEditingCustomFormat] = useState(false);
   const [customFormat, setCustomFormat] = useState('');
+
+  // Compression state
+  const [compressionLevel, setCompressionLevel] = useState(2); // Default: High Quality
+  const [compressionFormat, setCompressionFormat] = useState('jpg');
+  const [estimatedSize, setEstimatedSize] = useState<number | null>(null);
+  const [isEstimating, setIsEstimating] = useState(false);
 
   // Load image as base64
   useEffect(() => {
@@ -556,11 +565,101 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
     const format = customFormat.trim().toLowerCase();
     setIsEditingCustomFormat(false);
     setCustomFormat('');
-    
+
     try {
       await handleConvert(format);
     } catch (error) {
       // Error handling is done in handleConvert
+    }
+  };
+
+  // Compression handlers
+  const handleCompressionLevelChange = async (level: number) => {
+    setCompressionLevel(level);
+
+    // Estimate size when level changes
+    if (metadata) {
+      try {
+        setIsEstimating(true);
+        const inputPath = currentWorkingPath || currentFilePath;
+        const estimated = await invoke<number>('estimate_compressed_size', {
+          inputPath,
+          qualityLevel: level,
+          outputFormat: compressionFormat,
+        });
+        setEstimatedSize(estimated);
+      } catch (error) {
+        console.error('Size estimation failed:', error);
+        setEstimatedSize(null);
+      } finally {
+        setIsEstimating(false);
+      }
+    }
+  };
+
+  const handleCompressionFormatChange = async (format: string) => {
+    setCompressionFormat(format);
+
+    // Re-estimate size with new format
+    if (metadata) {
+      try {
+        setIsEstimating(true);
+        const inputPath = currentWorkingPath || currentFilePath;
+        const estimated = await invoke<number>('estimate_compressed_size', {
+          inputPath,
+          qualityLevel: compressionLevel,
+          outputFormat: format,
+        });
+        setEstimatedSize(estimated);
+      } catch (error) {
+        console.error('Size estimation failed:', error);
+        setEstimatedSize(null);
+      } finally {
+        setIsEstimating(false);
+      }
+    }
+  };
+
+  const handleCompress = async () => {
+    try {
+      setProcessing(true);
+      showToast('Compressing image...');
+
+      const inputPath = currentWorkingPath || currentFilePath;
+      const result = await invoke<{ output_path: string; file_size: number }>('compress_image', {
+        inputPath,
+        qualityLevel: compressionLevel,
+        outputFormat: compressionFormat,
+      });
+
+      const originalSize = metadata?.file_size || 0;
+      const reduction = Math.round(((originalSize - result.file_size) / originalSize) * 100);
+
+      if (reduction > 0) {
+        showToast(`Image compressed successfully! Saved ${reduction}% space`);
+      } else if (reduction < 0) {
+        showToast(`Warning: Compressed file is ${Math.abs(reduction)}% larger`);
+      } else {
+        showToast('Image compressed (similar size)');
+      }
+
+      // Update the current file path to the compressed file
+      setCurrentFilePath(result.output_path);
+      setCurrentWorkingPath(result.output_path);
+      setDisplayFileName(result.output_path.split('/').pop() || displayFileName);
+
+      // Reload metadata for the new file
+      const newMetadata = await invoke<ImageMetadata>('get_image_metadata', {
+        inputPath: result.output_path,
+      });
+      setMetadata(newMetadata);
+
+      // Reset estimation
+      setEstimatedSize(null);
+    } catch (error) {
+      showToast(`Compression failed: ${error}`);
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -866,21 +965,22 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         {/* Controls */}
         <div className="w-80 flex flex-col gap-4 overflow-y-auto overflow-x-visible flex-shrink-0 pt-6 pb-6 px-1">
           {/* AI Tools */}
-          <div>
-            <button
-              onClick={() => toggleCard('ai-tools')}
-              className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                AI Tools
-              </div>
-              <ChevronDown
-                className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                  expandedCard === 'ai-tools' ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+          {(!expandedCard || expandedCard === 'ai-tools') && (
+            <div>
+              <button
+                onClick={() => toggleCard('ai-tools')}
+                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  AI Tools
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
+                    expandedCard === 'ai-tools' ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
 
             {expandedCard === 'ai-tools' && (
               <div className="mt-4">
@@ -908,24 +1008,26 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                 </button>
               </div>
             )}
-          </div>
+            </div>
+          )}
 
           {/* Transform */}
-          <div>
-            <button
-              onClick={() => toggleCard('transform')}
-              className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <RotateCw className="w-4 h-4" />
-                Transform
-              </div>
-              <ChevronDown
-                className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                  expandedCard === 'transform' ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+          {(!expandedCard || expandedCard === 'transform') && (
+            <div>
+              <button
+                onClick={() => toggleCard('transform')}
+                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <RotateCw className="w-4 h-4" />
+                  Transform
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
+                    expandedCard === 'transform' ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
 
             {expandedCard === 'transform' && (
               <div className="mt-4">
@@ -980,24 +1082,26 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                 </button>
               </div>
             )}
-          </div>
+            </div>
+          )}
 
           {/* Convert */}
-          <div>
-            <button
-              onClick={() => toggleCard('convert')}
-              className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Download className="w-4 h-4" />
-                Convert Format
-              </div>
-              <ChevronDown
-                className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                  expandedCard === 'convert' ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+          {(!expandedCard || expandedCard === 'convert') && (
+            <div>
+              <button
+                onClick={() => toggleCard('convert')}
+                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Download className="w-4 h-4" />
+                  Convert Format
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
+                    expandedCard === 'convert' ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
 
             {expandedCard === 'convert' && (
               <div className="mt-4">
@@ -1042,24 +1146,92 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                 </div>
               </div>
             )}
-          </div>
+            </div>
+          )}
+
+          {/* Compress & Optimize */}
+          {(!expandedCard || expandedCard === 'compress') && (
+            <div>
+              <button
+                onClick={() => toggleCard('compress')}
+                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Gauge className="w-4 h-4" />
+                  Compress & Optimize
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
+                    expandedCard === 'compress' ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+            {expandedCard === 'compress' && (
+              <div className="mt-4 space-y-4">
+                <CompressionSlider
+                  value={compressionLevel}
+                  onChange={handleCompressionLevelChange}
+                  disabled={processing}
+                />
+
+                <div className="space-y-2">
+                  <label className="text-xs text-white/70 uppercase tracking-wide">
+                    Output Format
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['jpg', 'png', 'webp'].map((format) => (
+                      <button
+                        key={format}
+                        onClick={() => handleCompressionFormatChange(format)}
+                        disabled={processing}
+                        className={`glass-card px-3 py-2 rounded-xl text-white text-xs transition-all duration-300 disabled:opacity-50 uppercase ${
+                          compressionFormat === format
+                            ? 'bg-blue-500/30 border border-blue-400/50'
+                            : ''
+                        }`}
+                      >
+                        {format}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <FileSizeComparison
+                  originalSize={metadata?.file_size || 0}
+                  estimatedSize={estimatedSize}
+                  isEstimating={isEstimating}
+                />
+
+                <button
+                  onClick={handleCompress}
+                  disabled={processing || !metadata}
+                  className="w-full glass-card px-4 py-3 rounded-2xl text-white text-sm transition-all duration-300 disabled:opacity-50 hover:scale-105 bg-blue-500/30"
+                >
+                  Compress & Save
+                </button>
+              </div>
+            )}
+            </div>
+          )}
 
           {/* Metadata */}
-          <div>
-            <button
-              onClick={() => toggleCard('privacy-metadata')}
-              className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Trash2 className="w-4 h-4" />
-                Metadata
-              </div>
-              <ChevronDown
-                className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
-                  expandedCard === 'privacy-metadata' ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+          {(!expandedCard || expandedCard === 'privacy-metadata') && (
+            <div>
+              <button
+                onClick={() => toggleCard('privacy-metadata')}
+                className="w-full text-left text-white font-semibold flex items-center justify-between gap-2 py-2 hover:text-white/80 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-4 h-4" />
+                  Metadata
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-white/60 transition-transform duration-200 ${
+                    expandedCard === 'privacy-metadata' ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
 
             {expandedCard === 'privacy-metadata' && (
               <div className="mt-4 space-y-3">
@@ -1095,7 +1267,8 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
                 )}
               </div>
             )}
-          </div>
+            </div>
+          )}
 
           {/* Toast Notification */}
           {toast && (

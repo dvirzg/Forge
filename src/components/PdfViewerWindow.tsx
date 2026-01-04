@@ -84,23 +84,24 @@ function PdfViewerWindow() {
 
   // Calculate page size to fit viewport (both width and height)
   const calculatePageSize = useCallback(async () => {
-    if (typeof window === 'undefined' || !pdfData || !numPages) return;
-    
+    if (typeof window === 'undefined' || !pdfData || !numPages || !pageContainerRef.current) return;
+
     try {
       const pdf = await pdfjs.getDocument(pdfData).promise;
       const page = await pdf.getPage(pageNumber);
       const viewport = page.getViewport({ scale: 1.0 });
-      
-      const titleBarHeight = 40;
-      const navHeight = 60;
-      const padding = 20;
-      const availableWidth = window.innerWidth - padding * 2;
-      const availableHeight = window.innerHeight - titleBarHeight - navHeight - padding * 2;
-      
+
+      // Get actual container dimensions
+      const containerRect = pageContainerRef.current.getBoundingClientRect();
+      const padding = 20; // Minimal padding around the page
+      const availableWidth = containerRect.width - padding * 2;
+      const availableHeight = containerRect.height - padding * 2;
+
+      // Calculate scale to fit both dimensions, allow up to 150% for readability
       const scaleX = availableWidth / viewport.width;
       const scaleY = availableHeight / viewport.height;
-      const scale = Math.min(scaleX, scaleY, 1.0);
-      
+      const scale = Math.min(scaleX, scaleY, 1.5);
+
       setPageWidth(viewport.width * scale);
     } catch (error) {
       console.error('Failed to calculate page size:', error);
@@ -111,12 +112,19 @@ function PdfViewerWindow() {
     calculatePageSize();
   }, [calculatePageSize]);
 
+  // Recalculate page size when container size changes
   useEffect(() => {
-    const handleResize = () => {
+    if (!pageContainerRef.current) return;
+
+    const resizeObserver = new ResizeObserver(() => {
       calculatePageSize();
+    });
+
+    resizeObserver.observe(pageContainerRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
   }, [calculatePageSize]);
 
   // Reset zoom when page changes
@@ -184,16 +192,9 @@ function PdfViewerWindow() {
   };
 
   const handleMouseUp = () => {
-    if (!isSelecting || !selectionStart || !selectionEnd || !pageContainerRef.current || !pageElementRef.current) return;
+    if (!isSelecting || !selectionStart || !selectionEnd || !pageContainerRef.current) return;
 
     const containerRect = pageContainerRef.current.getBoundingClientRect();
-    const pageCanvas = pageElementRef.current.querySelector('.react-pdf__Page__canvas') as HTMLCanvasElement;
-    if (!pageCanvas) return;
-
-    // Get the canvas position relative to the container
-    const canvasRect = pageCanvas.getBoundingClientRect();
-    const canvasLeft = canvasRect.left - containerRect.left;
-    const canvasTop = canvasRect.top - containerRect.top;
 
     // Selection bounds in container coordinates
     const sx = Math.min(selectionStart.x, selectionEnd.x);
@@ -204,41 +205,21 @@ function PdfViewerWindow() {
     const sh = ey - sy;
 
     if (sw > 10 && sh > 10) {
-      // Selection center in container coordinates
-      const scx = (sx + ex) / 2;
-      const scy = (sy + ey) / 2;
+      // Selection center relative to container center
+      const selCenterX = (sx + ex) / 2 - containerRect.width / 2;
+      const selCenterY = (sy + ey) / 2 - containerRect.height / 2;
 
-      // Convert selection to canvas-relative coordinates
-      const canvasCenterX = scx - canvasLeft;
-      const canvasCenterY = scy - canvasTop;
+      // At current scale/offset, the point on the page that appears at selCenter is:
+      // pagePoint = (selCenter - offset) / scale
+      const pagePointX = (selCenterX - currentZoom.offsetX) / currentZoom.scale;
+      const pagePointY = (selCenterY - currentZoom.offsetY) / currentZoom.scale;
 
-      // Canvas dimensions and center
-      const canvasWidth = canvasRect.width;
-      const canvasHeight = canvasRect.height;
-      const canvasCX = canvasWidth / 2;
-      const canvasCY = canvasHeight / 2;
+      // Calculate new scale to fit selection in viewport
+      const newScale = Math.min(containerRect.width / sw, containerRect.height / sh) * currentZoom.scale;
 
-      // Selection center relative to canvas center (in current canvas pixels)
-      const relX = canvasCenterX - canvasCX;
-      const relY = canvasCenterY - canvasCY;
-
-      // Convert to base page coordinates (at scale 1)
-      const px = relX / currentZoom.scale;
-      const py = relY / currentZoom.scale;
-      const psw = sw / currentZoom.scale;
-      const psh = sh / currentZoom.scale;
-
-      // New scale to fill viewport
-      const newScale = Math.min(containerRect.width / psw, containerRect.height / psh);
-
-      // New offset to center selection: container_center - canvas_center - px * newScale
-      // We want the selection point to be at the container center
-      // Canvas will be at: container_center - canvas_size/2 + offset
-      // Point on canvas at px,py will be at: container_center - canvas_size/2 + offset + (canvas_size/2 + px*scale)
-      // Simplifies to: container_center + offset + px*scale
-      // We want this to equal container_center, so: offset = -px*scale
-      const newOffsetX = -px * newScale;
-      const newOffsetY = -py * newScale;
+      // To center this page point at new scale: offset = -pagePoint * newScale
+      const newOffsetX = -pagePointX * newScale;
+      const newOffsetY = -pagePointY * newScale;
 
       setZoomHistory([...zoomHistory, currentZoom]);
       setCurrentZoom({ scale: newScale, offsetX: newOffsetX, offsetY: newOffsetY });
@@ -375,7 +356,11 @@ function PdfViewerWindow() {
               <div
                 ref={pageElementRef}
                 style={{
-                  transform: `translate(${currentZoom.offsetX}px, ${currentZoom.offsetY}px)`,
+                  position: 'absolute',
+                  left: '50%',
+                  top: '50%',
+                  transform: `translate(calc(-50% + ${currentZoom.offsetX}px), calc(-50% + ${currentZoom.offsetY}px))`,
+                  transformOrigin: 'center',
                   transition: isSelecting ? 'none' : 'transform 0.2s ease-out',
                 }}
               >

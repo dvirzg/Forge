@@ -1,20 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { appWindow, LogicalSize, LogicalPosition, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
+import { appWindow, LogicalSize, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/tauri';
-import {
-  Image,
-  FileText,
-  Video,
-  Type,
-  Sparkles,
-  RotateCw,
-  FlipHorizontal,
-  Scissors,
-  Trash2,
-  Download,
-  X
-} from 'lucide-react';
+import { X } from 'lucide-react';
 import ImageProcessor from './components/ImageProcessor';
 import PdfProcessor from './components/PdfProcessor';
 import VideoProcessor from './components/VideoProcessor';
@@ -208,7 +196,7 @@ function App() {
         </div>
       </div>
 
-      <div className="absolute top-10 left-0 right-0 bottom-0 z-10">
+      <div className="absolute top-0 left-0 right-0 bottom-0 z-10">
         {!droppedFile ? (
           <div className="h-full flex items-center justify-center pointer-events-none">
             {/* Drop zone */}
@@ -223,7 +211,7 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="pointer-events-auto h-full px-6 pb-6">
+          <div className="pointer-events-auto h-full px-6 pb-6 pt-10">
             {renderProcessor()}
           </div>
         )}

@@ -1,4 +1,3 @@
-import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { Trash2, ExternalLink } from 'lucide-react';
 import { CollapsibleSection } from './CollapsibleSection';

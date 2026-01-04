@@ -528,7 +528,7 @@ function ImageProcessor({ file, onReset }: ImageProcessorProps) {
         return;
       }
 
-      const result = await invoke<string>('convert_image', {
+      await invoke<string>('convert_image', {
         inputPath: currentFilePath,
         outputPath,
         format,

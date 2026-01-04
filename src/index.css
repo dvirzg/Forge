@@ -117,3 +117,23 @@ body {
   opacity: 0.3;
 }
 
+/* Prevent text selection during zoom mode */
+.zoom-mode-active,
+.zoom-mode-active * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+}
+
+.zoom-mode-active .react-pdf__Page__textContent,
+.zoom-mode-active .react-pdf__Page__textContent *,
+.zoom-mode-active .react-pdf__Page__annotations,
+.zoom-mode-active .react-pdf__Page__annotations * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  pointer-events: none !important;
+}
+

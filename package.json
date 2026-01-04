@@ -18,7 +18,8 @@
     "react": "^18.2.0",
     "react-cropper": "^2.1.6",
     "react-dom": "^18.2.0",
-    "react-pdf": "^10.3.0"
+    "react-pdf": "^10.3.0",
+    "react-zoom-pan-pinch": "^3.7.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.9",
